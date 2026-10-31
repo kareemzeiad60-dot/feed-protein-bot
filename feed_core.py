@@ -147,6 +147,13 @@ def _clean_number_text(line: str) -> str:
     return s.replace(",", ".").replace("،", " ")
 
 
+def parse_number(text: str):
+    """رقم لوحده (مع كجم/كيلو اختياري). يرجّع float أو None."""
+    s = _clean_number_text(text)
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(?:كجم|كيلو|كغ|kg)?\s*", s, re.I)
+    return float(m.group(1)) if m else None
+
+
 def parse_message(text: str, feeds):
     """
     كل سطر: اسم المادة + الكمية (بالكيلو). أمثلة:
