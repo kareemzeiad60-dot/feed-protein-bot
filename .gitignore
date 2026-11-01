@@ -3,3 +3,7 @@ __pycache__/
 .env
 venv/
 .venv/
+# بيانات المستخدمين — ما تترفعش على GitHub أبداً (المستودع Public)
+bot_data.json
+bot_data.json.tmp
+x.json

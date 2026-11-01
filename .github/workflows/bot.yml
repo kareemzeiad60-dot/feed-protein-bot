@@ -2,16 +2,21 @@ name: Run Telegram Bot
 
 # GitHub Actions مش استضافة دايمة: أي job بيقف بعد 6 ساعات كحد أقصى.
 # عشان كده البوت بيشتغل 5 ساعات و50 دقيقة وبعدها بيبدأ تشغيل جديد تلقائياً (كل 6 ساعات).
-# تيليجرام بيحتفظ بالرسائل اللي توصل في الفاصل القصير بينهم، فمفيش رسايل بتضيع.
+# بيانات المستخدمين بتتحفظ كنسخة احتياطية مثبّتة في شات الأدمن مع البوت وبتتستعاد مع كل تشغيل.
 on:
   schedule:
     - cron: "0 */6 * * *"
+  push:
+    branches: [main]
+    paths: ["**.py", "requirements.txt", "*.xlsx", ".github/workflows/bot.yml"]
   workflow_dispatch:        # تشغيل يدوي من تبويب Actions
 
-# تشغيل واحد بس في نفس الوقت (لو اتنين بيعملوا polling تيليجرام بيرجّع خطأ 409)
+# تشغيل واحد بس في نفس الوقت (لو اتنين بيعملوا polling تيليجرام بيرجّع خطأ 409).
+# أي push/تشغيل يدوي بيوقف النسخة القديمة ويشغّل الجديدة فوراً (عشان التعديلات تتطبّق).
+# التشغيل المجدول بيستنى لحد ما اللي شغال يخلّص من غير ما يقطعه.
 concurrency:
   group: feed-bot
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
   contents: read
@@ -40,5 +45,7 @@ jobs:
       - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS || vars.ADMIN_IDS }}
+          CHANNEL_USERNAME: "@KIRA349A"
         # 124 = وقت التشغيل خلص طبيعي (مش خطأ)
         run: timeout 350m python bot.py || [ $? -eq 124 ]

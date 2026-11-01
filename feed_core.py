@@ -13,7 +13,8 @@ from dataclasses import dataclass
 import openpyxl
 
 FIRST_ROW, LAST_ROW = 5, 25          # صفوف المواد العلفية في الشيت الأول
-QTY_COL = 2                          # العمود B = الكمية (الخلايا الوحيدة المفتوحة للتعديل)
+QTY_COL = 2                          # العمود B = الكمية (خلايا مفتوحة للتعديل)
+PRICE_COL = 11                       # العمود K = سعر الطن بالجنيه (مفتوح كمان)
 ADDITIVE_FIRST_ROW = 20              # من الصف 20 لـ 25 إضافات (الخلايا الخضراء) وليها جرعات قياسية
 
 # أسماء بديلة شائعة (المفتاح = الاسم الإنجليزي في الملف). تقدر تزود عليها براحتك.
@@ -190,36 +191,90 @@ def parse_message(text: str, feeds):
 # ----------------------------------------------------------------------------
 # الحساب (نفس معادلات الملف بالظبط)
 # ----------------------------------------------------------------------------
-def compute(quantities: dict, feeds) -> dict:
-    """E = الكمية × (DM% × CP_dm%)  ،  CP% = إجمالي البروتين ÷ إجمالي الوزن."""
-    lines, total_w, total_p = [], 0.0, 0.0
+def compute(quantities: dict, feeds, prices: dict = None) -> dict:
+    """
+    E = الكمية × (DM% × CP_dm%)  ،  CP% = إجمالي البروتين ÷ إجمالي الوزن
+    نسبة المكون = كميته ÷ إجمالي الخلطة.  التكلفة (جنيه/طن خلطة) = مجموع (سعر طن المكون × نسبته).
+    """
+    prices = prices or {}
+    total_w = sum(quantities.get(f.row, 0.0) for f in feeds)
+    lines, total_p, cost, missing = [], 0.0, 0.0, []
     for f in feeds:
         q = quantities.get(f.row, 0.0)
+        if q <= 0:
+            continue
         p = q * f.cp_as_fed
-        total_w += q
+        share = q / total_w if total_w > 0 else 0.0
         total_p += p
-        if q > 0:
-            lines.append((f, q, p))
+        lines.append((f, q, p, share))
+        price = prices.get(f.row, 0.0)
+        if price > 0:
+            cost += price * share
+        else:
+            missing.append(f)
     return {
         "lines": lines,
         "total_weight": total_w,
         "protein_kg": total_p,
         "cp_pct": (total_p / total_w * 100) if total_w > 0 else 0.0,
+        "cost_per_ton": cost if any(prices.get(f.row, 0) > 0 for f, *_ in lines) else None,
+        "missing_price": missing,
     }
+
+
+def advice(res: dict, target_pct: float, feeds):
+    """
+    نصيحة للوصول للبروتين المستهدف بإضافة خامة واحدة:
+      ناقص ← كسب صويا (أعلى بروتين) ، زايد ← ذرة صفراء (تخفيف).
+    الحل: (P + x·cp) / (W + x) = t   ⇒   x = (t·W − P) / (cp − t)
+    يرجّع (حالة, نص) حيث الحالة ok / low / high / none.
+    """
+    W, P, t = res["total_weight"], res["protein_kg"], target_pct / 100
+    if W <= 0:
+        return "none", ""
+    diff = res["cp_pct"] - target_pct
+    if abs(diff) < 0.25:
+        return "ok", f"🎯 الهدف {target_pct:g}% ✅ (الحالي {res['cp_pct']:.2f}%)"
+    by_en = {f.name_en: f for f in feeds}
+    if diff < 0:
+        src = by_en.get("Soybean Meal (44%)") or max(feeds, key=lambda f: f.cp_as_fed)
+        if src.cp_as_fed > t:
+            x = (t * W - P) / (src.cp_as_fed - t)
+            return "low", (f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬇️ (ناقص {abs(diff):.2f}%)\n"
+                           f"💡 ضيف حوالي {x:,.1f} كجم {src.name_ar} عشان توصل للهدف")
+        return "low", f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬇️"
+    src = by_en.get("Yellow Corn") or min((f for f in feeds if f.cp_as_fed > 0), key=lambda f: f.cp_as_fed)
+    if src.cp_as_fed < t:
+        x = (P - t * W) / (t - src.cp_as_fed)
+        return "high", (f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬆️ (زايد {diff:.2f}%)\n"
+                        f"💡 ضيف حوالي {x:,.1f} كجم {src.name_ar} عشان تنزل للهدف")
+    return "high", f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬆️"
+
+
+def scale_quantities(quantities: dict, new_total: float) -> dict:
+    """تحجيم الخلطة (كل الكميات بنفس النسبة) لحد ما الإجمالي يبقى new_total كجم."""
+    total = sum(quantities.values())
+    if total <= 0:
+        return dict(quantities)
+    k = new_total / total
+    return {row: round(q * k, 2) for row, q in quantities.items()}
 
 
 # ----------------------------------------------------------------------------
 # تعديل الملف
 # ----------------------------------------------------------------------------
-def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: bool = False) -> str:
+def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: bool = False, prices: dict = None) -> str:
     """
-    بينسخ القالب ويكتب الكميات في العمود B بس (الخلايا المفتوحة)،
-    وكل المعادلات والحماية والتنسيق زي ما هم. الإكسل بيحسب لما الملف يتفتح.
+    بينسخ القالب ويكتب الكميات في العمود B والأسعار في العمود K (الخلايا الصفرا المفتوحة) بس،
+    وكل المعادلات (نسب المكونات، كجم/طن، التكلفة...) والحماية والتنسيق زي ما هم.
     """
     wb = openpyxl.load_workbook(template_path)
     ws = wb.worksheets[0]
     for row, qty in quantities.items():
         ws.cell(row, QTY_COL).value = qty
+    for row, price in (prices or {}).items():
+        if price and price > 0:
+            ws.cell(row, PRICE_COL).value = price
     wb.calculation.fullCalcOnLoad = True
     wb.save(out_path)
     if recalc:
