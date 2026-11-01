@@ -234,22 +234,23 @@ def advice(res: dict, target_pct: float, feeds):
     if W <= 0:
         return "none", ""
     diff = res["cp_pct"] - target_pct
+    head = f"🎯 الهدف: {target_pct:g}%"
     if abs(diff) < 0.25:
-        return "ok", f"🎯 الهدف {target_pct:g}% ✅ (الحالي {res['cp_pct']:.2f}%)"
+        return "ok", f"{head}\n✅ الحالي: {res['cp_pct']:.2f}% وعلى الهدف"
     by_en = {f.name_en: f for f in feeds}
     if diff < 0:
+        line = f"{head}\n⬇️ الحالي: {res['cp_pct']:.2f}% ناقص {abs(diff):.2f}%"
         src = by_en.get("Soybean Meal (44%)") or max(feeds, key=lambda f: f.cp_as_fed)
         if src.cp_as_fed > t:
             x = (t * W - P) / (src.cp_as_fed - t)
-            return "low", (f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬇️ (ناقص {abs(diff):.2f}%)\n"
-                           f"💡 ضيف حوالي {x:,.1f} كجم {src.name_ar} عشان توصل للهدف")
-        return "low", f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬇️"
+            line += f"\n💡 ضيف حوالي {x:,.1f} كجم {src.name_ar} عشان توصل للهدف"
+        return "low", line
+    line = f"{head}\n⬆️ الحالي: {res['cp_pct']:.2f}% زايد {diff:.2f}%"
     src = by_en.get("Yellow Corn") or min((f for f in feeds if f.cp_as_fed > 0), key=lambda f: f.cp_as_fed)
     if src.cp_as_fed < t:
         x = (P - t * W) / (t - src.cp_as_fed)
-        return "high", (f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬆️ (زايد {diff:.2f}%)\n"
-                        f"💡 ضيف حوالي {x:,.1f} كجم {src.name_ar} عشان تنزل للهدف")
-    return "high", f"🎯 الهدف {target_pct:g}% — الحالي {res['cp_pct']:.2f}% ⬆️"
+        line += f"\n💡 ضيف حوالي {x:,.1f} كجم {src.name_ar} عشان تنزل للهدف"
+    return "high", line
 
 
 def scale_quantities(quantities: dict, new_total: float) -> dict:

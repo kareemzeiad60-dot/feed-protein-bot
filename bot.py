@@ -91,10 +91,20 @@ def short(x: float) -> str:
     return f"{x:g}"
 
 
+RLM = "\u200f"          # علامة اتجاه من اليمين: بتثبّت كل سطر RTL حتى لو بدأ برقم أو إيموجي
+
+
+def rtl(text: str) -> str:
+    """كل سطر بيتثبّت من اليمين عشان الأرقام والنسب ما تلخبطش السطر."""
+    return "\n".join(RLM + line if line.strip() else line for line in text.split("\n"))
+
+
 def summary_text(res: dict, title: str, target=None) -> str:
-    rows = "\n".join(f"• {f.name_ar}: {fmt(q)} كجم ({share * 100:.2f}%) ← بروتين {fmt(p)} كجم"
-                     for f, q, p, share in res["lines"])
-    out = (f"{title}\n\n{rows}\n\n"
+    items = "\n".join(
+        f"• {f.name_ar}\n   {fmt(q)} كجم • {share * 100:.2f}% • بروتين {fmt(p)} كجم"
+        for f, q, p, share in res["lines"])
+    out = (f"{title}\n\n{items}\n\n"
+           f"━━━━━━━━━━\n"
            f"⚖️ الوزن الكلي: {fmt(res['total_weight'])} كجم\n"
            f"🥩 كمية البروتين: {fmt(res['protein_kg'])} كجم\n"
            f"📊 نسبة البروتين الخام: {res['cp_pct']:.2f}%")
@@ -106,7 +116,7 @@ def summary_text(res: dict, title: str, target=None) -> str:
         out += f"\n\n💵 تكلفة طن الخلطة: {fmt(res['cost_per_ton'])} جنيه"
         if res["missing_price"]:
             out += "\n⚠️ ناقص سعر: " + "، ".join(f.name_ar for f in res["missing_price"])
-    return out
+    return rtl(out)
 
 
 # ----------------------------------------------------------------------------
@@ -153,12 +163,13 @@ def qty_view(u, row: int):
     f = BY_ROW[row]
     q = u["qty"].get(row, 0)
     price = u["prices"].get(row, 0)
-    text = (
-        f"{f.name_ar}\n"
-        f"الكمية الحالية: {fmt(q)} كجم\n"
-        f"البروتين في الخامة: {f.cp_as_fed * 100:.2f}% ← بروتين الكمية دي: {fmt(q * f.cp_as_fed)} كجم\n"
+    text = rtl(
+        f"🔹 {f.name_ar}\n\n"
+        f"⚖️ الكمية: {fmt(q)} كجم\n"
+        f"🥩 البروتين في الخامة: {f.cp_as_fed * 100:.2f}%\n"
+        f"🥩 بروتين الكمية دي: {fmt(q * f.cp_as_fed)} كجم\n"
         f"💵 سعر الطن: {fmt(price) + ' جنيه' if price > 0 else 'مش متحدد'}\n\n"
-        "اظبط الكمية بالأزرار أو دوس «اكتب رقم»:"
+        "اظبط الكمية بالأزرار أو دوس «✍️ اكتب رقم»:"
     )
     d = lambda n: Btn(f"{'➕' if n > 0 else '➖'}{abs(n)}", callback_data=f"d:{row}:{n}")
     kb = Markup([
@@ -358,6 +369,7 @@ async def _send_file(chat_message, update, context: ContextTypes.DEFAULT_TYPE):
             caption += f"\n💵 تكلفة طن الخلطة: {fmt(res['cost_per_ton'])} جنيه"
         if BOT_USERNAME and WATERMARK:
             caption += f"\n\n🤖 @{BOT_USERNAME}"
+        caption = rtl(caption)
         with open(path, "rb") as fh:
             await chat_message.reply_document(fh, filename="Feed_Calculation.xlsx", caption=caption)
     S(context).count_calc(uid)
