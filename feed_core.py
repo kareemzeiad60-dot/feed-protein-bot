@@ -2,6 +2,7 @@
 منطق الحساب والتعامل مع ملف الإكسل (بدون أي اعتماد على تيليجرام).
 Core logic: read feeds from the template, parse user text, fill the workbook, compute protein.
 """
+import copy
 import difflib
 import os
 import re
@@ -263,18 +264,76 @@ def scale_quantities(quantities: dict, new_total: float) -> dict:
 # ----------------------------------------------------------------------------
 # تعديل الملف
 # ----------------------------------------------------------------------------
+_REF = re.compile(r"(\$?[A-Z]{1,3})(\$?)(\d+)(?::(\$?[A-Z]{1,3})(\$?)(\d+))?")
+TOTAL_ROW = LAST_ROW + 1             # صف الإجمالي في القالب (26)
+
+
+def _map_formula(f: str, new_of: dict, last_new: int, tot_new: int) -> str:
+    """يعدّل أرقام الصفوف في الصيغة بعد حذف الخامات الفاضية (صف الإجمالي والنطاقات بتتظبط)."""
+    def one(r):
+        return tot_new if r == TOTAL_ROW else new_of.get(r, r)
+
+    def sub(m):
+        c1, d1, r1, c2, d2, r2 = m.groups()
+        r1 = int(r1)
+        if c2 is None:
+            return f"{c1}{d1}{one(r1)}"
+        r2 = int(r2)
+        return f"{c1}{d1}{FIRST_ROW if r1 == FIRST_ROW else one(r1)}:{c2}{d2}{last_new if r2 == LAST_ROW else one(r2)}"
+    return _REF.sub(sub, f)
+
+
+def _compact_sheet(ws, table_cols: int, selected: list, keep_own_style: set):
+    """يسيب في الجدول الخامات المختارة بس (بنفس الترتيب) وينقل صف الإجمالي تحتهم."""
+    from openpyxl.styles.cell_style import StyleArray
+    new_of = {old: FIRST_ROW + i for i, old in enumerate(selected)}
+    last_new = FIRST_ROW + len(selected) - 1
+    tot_new = last_new + 1
+    snap = {(r, c): (ws.cell(r, c).value, copy.copy(ws.cell(r, c)._style))
+            for r in range(FIRST_ROW, TOTAL_ROW + 1) for c in range(1, table_cols + 1)}
+    for r in range(FIRST_ROW, TOTAL_ROW + 1):                       # امسح الجدول القديم (من غير عمود الملخص)
+        for c in range(1, table_cols + 1):
+            cell = ws.cell(r, c)
+            cell.value, cell._style = None, StyleArray()
+
+    def put(row, col, old_row, style_row):
+        v, _ = snap[(old_row, col)]
+        _, st = snap[(style_row, col)]
+        cell = ws.cell(row, col)
+        cell._style = copy.copy(st)
+        cell.value = _map_formula(v, new_of, last_new, tot_new) if isinstance(v, str) and v.startswith("=") else v
+
+    for i, old in enumerate(selected):
+        zebra = FIRST_ROW if i % 2 == 0 else FIRST_ROW + 1          # تظليل متبادل بعد الضغط
+        for c in range(1, table_cols + 1):
+            put(FIRST_ROW + i, c, old, old if c in keep_own_style else zebra)
+    for c in range(1, table_cols + 1):
+        put(tot_new, c, TOTAL_ROW, TOTAL_ROW)
+    for row in ws.iter_rows(min_col=table_cols + 1):                # صيغ الملخص (B26 -> صف الإجمالي الجديد...)
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.value = _map_formula(cell.value, new_of, last_new, tot_new)
+    return new_of
+
+
 def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: bool = False, prices: dict = None) -> str:
     """
-    بينسخ القالب ويكتب الكميات في العمود B والأسعار في العمود K (الخلايا الصفرا المفتوحة) بس،
-    وكل المعادلات (نسب المكونات، كجم/طن، التكلفة...) والحماية والتنسيق زي ما هم.
+    بينسخ القالب ويسيب فيه الخامات اللي كميتها > 0 بس (الباقي بيتشال من الشيتين)،
+    ويكتب الكميات في العمود B والأسعار في العمود K. كل المعادلات (نسب المكونات، كجم/طن،
+    التكلفة، الملخص) بتتعدّل على الصفوف الجديدة، والحماية والتنسيق زي ما هم.
     """
     wb = openpyxl.load_workbook(template_path)
-    ws = wb.worksheets[0]
-    for row, qty in quantities.items():
-        ws.cell(row, QTY_COL).value = qty
-    for row, price in (prices or {}).items():
+    selected = [r for r in range(FIRST_ROW, LAST_ROW + 1) if quantities.get(r, 0) > 0]
+    if not selected:
+        raise ValueError("no ingredients with quantity > 0")
+    ws1, ws2 = wb.worksheets[0], wb.worksheets[1]
+    new_of = _compact_sheet(ws1, 12, selected, keep_own_style={QTY_COL, PRICE_COL})   # A..L : B و K خلايا إدخال ملونة
+    _compact_sheet(ws2, 10, selected, keep_own_style=set())                          # A..J
+    for old, new in new_of.items():
+        ws1.cell(new, QTY_COL).value = quantities[old]
+        price = (prices or {}).get(old, 0)
         if price and price > 0:
-            ws.cell(row, PRICE_COL).value = price
+            ws1.cell(new, PRICE_COL).value = price
     wb.calculation.fullCalcOnLoad = True
     wb.save(out_path)
     if recalc:

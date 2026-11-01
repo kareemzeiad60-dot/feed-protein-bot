@@ -13,7 +13,9 @@ import shutil
 import tempfile
 import time
 
-from telegram import BotCommand, BotCommandScopeChat, InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, Update
+from telegram import (BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, BotCommandScopeDefault,
+                      InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, MenuButtonCommands, MenuButtonDefault,
+                      ReplyKeyboardRemove, Update)
 from telegram.constants import ChatMemberStatus
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler,
@@ -33,6 +35,8 @@ ADMIN_IDS = [int(x) for x in re.findall(r"\d+", os.environ.get("ADMIN_IDS", ""))
 CHANNEL = os.environ.get("CHANNEL_USERNAME", "@KIRA349A")
 CHANNEL_URL = f"https://t.me/{CHANNEL.lstrip('@')}"
 REQUIRE_SUB = os.environ.get("REQUIRE_SUBSCRIPTION", "1") != "0"
+# قائمة الأوامر اللي جنب خانة الكتابة (زرار Menu). COMMAND_MENU=0 يشيلها خالص.
+COMMAND_MENU = os.environ.get("COMMAND_MENU", "1") != "0"
 # إعادة الحساب بـ LibreOffice (لو متسطّب) عشان القيم تظهر في معاينة الموبايل. اقفلها بـ RECALC=0
 RECALC = os.environ.get("RECALC", "1") != "0" and bool(shutil.which("soffice") or shutil.which("libreoffice"))
 FEEDS = fc.load_feeds(TEMPLATE)
@@ -281,7 +285,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = me(update, context)
     context.user_data.pop("awaiting", None)
     text, kb = menu_view(u, is_admin(context, uid))
-    await update.message.reply_text(WELCOME)
+    # ReplyKeyboardRemove بيشيل أي كيبورد قديم لازق تحت خانة الكتابة (من نسخ قديمة)
+    await update.message.reply_text(WELCOME, reply_markup=ReplyKeyboardRemove())
+    try:                                                   # وبيصفّي أي زرار قائمة مخصص قديم في الشات ده
+        await context.bot.set_chat_menu_button(chat_id=update.effective_chat.id,
+                                               menu_button=MenuButtonCommands() if COMMAND_MENU else MenuButtonDefault())
+    except TelegramError:
+        pass
     await update.message.reply_text(text, reply_markup=kb)
 
 
@@ -439,6 +449,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if aw and aw["type"] == "bc":
         await admin.capture_broadcast(update, context)
         return
+    if aw and aw["type"] == "import":
+        await admin.capture_import(update, context)
+        return
     text = msg.text
     if not text:
         t, kb = menu_view(u, adm)
@@ -528,16 +541,26 @@ async def post_init(app: Application):
             break
         await asyncio.sleep(2)
     app.bot_data["flush_task"] = asyncio.create_task(flush_loop(app))
-    users = [BotCommand("start", "ابدأ"), BotCommand("calc", "احسب وابعت الملف"),
-             BotCommand("new", "خلطة جديدة"), BotCommand("feeds", "أسماء الخامات"), BotCommand("help", "مساعدة")]
+    await reset_menus(app)
+
+
+async def reset_menus(app: Application):
+    """بيمسح أي قوايم أوامر/أزرار قديمة (كل النطاقات واللغات) وبيحط القائمة المحدّثة (أو مفيش لو COMMAND_MENU=0)."""
+    bot, admins = app.bot, app.bot_data["admin_ids"]
+    base = [BotCommand("start", "القائمة الرئيسية"), BotCommand("calc", "احسب وابعت الملف"),
+            BotCommand("new", "خلطة جديدة"), BotCommand("help", "مساعدة")]
+    extra = [BotCommand("admin", "لوحة الأدمن"), BotCommand("broadcast", "رسالة جماعية"), BotCommand("import", "استيراد مستخدمين")]
     try:
-        await app.bot.set_my_commands(users)
-        for a in app.bot_data["admin_ids"]:
-            await app.bot.set_my_commands(users + [BotCommand("admin", "لوحة الأدمن"),
-                                                   BotCommand("broadcast", "رسالة جماعية")],
-                                          scope=BotCommandScopeChat(a))
+        for scope in [BotCommandScopeDefault(), BotCommandScopeAllPrivateChats()] + [BotCommandScopeChat(a) for a in admins]:
+            for lang in (None, "ar", "en"):
+                await bot.delete_my_commands(scope=scope, language_code=lang)
+        if COMMAND_MENU:
+            await bot.set_my_commands(base)
+            for a in admins:
+                await bot.set_my_commands(base + extra, scope=BotCommandScopeChat(a))
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands() if COMMAND_MENU else MenuButtonDefault())
     except TelegramError as e:
-        log.warning("set_my_commands failed: %s", e)
+        log.warning("reset_menus failed: %s", e)
 
 
 async def post_stop(app: Application):
@@ -554,6 +577,7 @@ def build_app(token: str) -> Application:
     app = Application.builder().token(token).post_init(post_init).post_stop(post_stop).build()
     app.bot_data["store"] = Store(DATA_FILE, ADMIN_IDS)
     app.bot_data["admin_ids"] = ADMIN_IDS
+    app.bot_data["feeds"] = FEEDS
     app.add_handler(TypeHandler(Update, gate), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))

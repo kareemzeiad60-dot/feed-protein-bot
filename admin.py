@@ -6,6 +6,7 @@ import asyncio
 import csv
 import io
 import logging
+import re
 from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, Update
@@ -36,13 +37,15 @@ def panel_view(context):
         f"🆕 جداد آخر 24 ساعة: {s['new_24h']}\n"
         f"🟢 نشطين آخر 24 ساعة: {s['active_24h']}\n"
         f"📅 نشطين آخر 7 أيام: {s['active_7d']}\n"
+        f"📥 مستوردين لسه ماكلّموش البوت: {s['imported_pending']}\n"
         f"🚫 عاملين بلوك للبوت: {s['blocked']}   |   ⛔ محظورين: {s['banned']}\n\n"
         f"🧮 عمليات الحساب: {s['calcs_total']} (النهاردة {s['calcs_today']})\n"
         f"📣 هيوصلهم البرودكاست: {len(_store(context).broadcast_targets())}"
     )
     kb = Markup([
         [Btn("📣 رسالة جماعية (برودكاست)", callback_data="adm:bc")],
-        [Btn("👥 ملف المستخدمين (CSV)", callback_data="adm:csv"), Btn("🔄 تحديث", callback_data="adm:panel")],
+        [Btn("📥 استيراد مستخدمين", callback_data="adm:imp"), Btn("👥 ملف المستخدمين", callback_data="adm:csv")],
+        [Btn("🔄 تحديث", callback_data="adm:panel")],
         [Btn("🔙 رجوع", callback_data="m")],
     ])
     return text, kb
@@ -92,6 +95,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, action
 
     elif action == "csv":
         await send_users_csv(q.message, context)
+
+    elif action == "imp":
+        context.user_data["awaiting"] = {"type": "import"}
+        await _show(q, (IMPORT_PROMPT, CANCEL_KB))
 
 
 async def capture_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,13 +153,62 @@ async def run_broadcast(app, src, status_msg):
         await app.bot.send_message(src_chat, report)
 
 
+IMPORT_PROMPT = ("📥 ابعت أرقام (IDs) المستخدمين القدام: كل رقم في سطر أو مفصولين بمسافة/فاصلة، "
+                 "أو ابعت ملف txt/csv فيه الأرقام.")
+
+
+def parse_ids(text: str) -> list:
+    return list(dict.fromkeys(int(x) for x in re.findall(r"(?<!\d)\d{5,15}(?!\d)", text)))
+
+
+async def _do_import(message, context, ids: list):
+    from feed_core import default_quantities
+    feeds = context.application.bot_data["feeds"]
+    added, existing = _store(context).import_ids(ids, default_quantities(feeds))
+    await message.reply_text(
+        f"✅ اتضاف {added} مستخدم جديد" + (f" ({existing} كانوا موجودين)" if existing else "") + ".\n"
+        "ملحوظة: تيليجرام بيسمح للبوت يبعت بس للي سبق وبدأوا المحادثة معاه. اللي مش هيوصلهم برودكاست "
+        "بيتعلّموا تلقائياً وبيتشالوا من القائمة بعد أول برودكاست.")
+
+
+async def capture_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not is_admin(context, update.effective_user.id):
+        context.user_data.pop("awaiting", None)
+        return
+    text = msg.text or ""
+    if msg.document:
+        if (msg.document.file_size or 0) > 5_000_000:
+            await msg.reply_text("الملف كبير أوي (الحد 5MB).")
+            return
+        f = await msg.document.get_file()
+        text += " " + bytes(await f.download_as_bytearray()).decode("utf-8", errors="ignore")
+    ids = parse_ids(text)
+    if not ids:
+        await msg.reply_text("مالقيتش أرقام صالحة. ابعت الأرقام (5 أرقام فأكتر) أو اضغط إلغاء.", reply_markup=CANCEL_KB)
+        return
+    context.user_data.pop("awaiting", None)
+    await _do_import(msg, context, ids)
+
+
+async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(context, update.effective_user.id):
+        return
+    ids = parse_ids(" ".join(context.args or []))
+    if ids:
+        await _do_import(update.message, context, ids)
+        return
+    context.user_data["awaiting"] = {"type": "import"}
+    await update.message.reply_text(IMPORT_PROMPT, reply_markup=CANCEL_KB)
+
+
 async def send_users_csv(message, context):
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["id", "name", "username", "joined_utc", "last_seen_utc", "calcs", "blocked", "banned"])
+    w.writerow(["id", "name", "username", "joined_utc", "last_seen_utc", "calcs", "blocked", "banned", "imported"])
     for uid, u in _store(context).users.items():
         w.writerow([uid, u["name"], u["username"], _ts(u["joined"]), _ts(u["last_seen"]),
-                    u.get("calcs", 0), int(bool(u.get("blocked"))), int(bool(u.get("banned")))])
+                    u.get("calcs", 0), int(bool(u.get("blocked"))), int(bool(u.get("banned"))), int(bool(u.get("imported")))])
     await message.reply_document(document=buf.getvalue().encode("utf-8-sig"), filename="users.csv",
                                  caption=f"👥 {len(_store(context).users)} مستخدم")
 
@@ -208,4 +264,4 @@ async def cmd_unban(update, context):
 
 def handlers():
     return [CommandHandler("admin", cmd_admin), CommandHandler("broadcast", cmd_broadcast),
-            CommandHandler("users", cmd_users), CommandHandler("ban", cmd_ban), CommandHandler("unban", cmd_unban)]
+            CommandHandler("users", cmd_users), CommandHandler("import", cmd_import), CommandHandler("ban", cmd_ban), CommandHandler("unban", cmd_unban)]

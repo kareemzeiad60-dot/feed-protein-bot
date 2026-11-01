@@ -9,7 +9,7 @@ from telegram.error import Forbidden, RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop
 
 ADMIN, USER = 1, 100
-bd = {"store": storage.Store(os.environ["DATA_FILE"], [ADMIN]), "admin_ids": [ADMIN]}
+bd = {"store": storage.Store(os.environ["DATA_FILE"], [ADMIN]), "admin_ids": [ADMIN], "feeds": bot.FEEDS}
 bd["store"].restored = True
 
 def ctx(uid):
@@ -18,11 +18,12 @@ def ctx(uid):
     return c
 USERDATA = {}
 BOT = MagicMock()
-for n in ("send_message", "send_document", "copy_message", "pin_chat_message", "edit_message_media"):
+for n in ("send_message", "send_document", "copy_message", "pin_chat_message", "edit_message_media",
+          "set_chat_menu_button", "delete_my_commands", "set_my_commands"):
     setattr(BOT, n, AsyncMock())
 
 def upd_msg(uid, text=None):
-    u = MagicMock(); u.effective_user.id = uid; u.effective_user.full_name = f"user{uid}"; u.effective_user.username = f"u{uid}"
+    u = MagicMock(); u.effective_chat.id = uid; u.effective_user.id = uid; u.effective_user.full_name = f"user{uid}"; u.effective_user.username = f"u{uid}"
     u.effective_user.is_bot = False; u.callback_query = None
     m = u.message; m.text = text; m.chat_id = uid; m.message_id = 5
     m.reply_text = AsyncMock(); m.reply_document = AsyncMock()
@@ -131,6 +132,57 @@ async def main():
     c.args = ["203"]; await admin.cmd_unban(u, c); assert not store.users[203]["banned"]
     u = upd_msg(ADMIN); await admin.cmd_users(u, ctx(ADMIN)); csv_bytes = u.message.reply_document.call_args.kwargs["document"]
     assert b"id,name" in csv_bytes and len(csv_bytes.splitlines()) >= 6; print("3c ban/unban/users.csv: OK")
+
+    # ================= 3d) تنضيف الزراير اللي تحت + قائمة الأوامر =================
+    from telegram import ReplyKeyboardRemove, MenuButtonCommands
+    BOT.set_chat_menu_button.reset_mock()
+    u = upd_msg(USER, "/start"); await bot.start(u, ctx(USER))
+    first = u.message.reply_text.call_args_list[0]
+    assert isinstance(first.kwargs["reply_markup"], ReplyKeyboardRemove)             # كيبورد قديم يتشال
+    assert u.message.reply_text.call_args_list[1].kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "a:0"   # القائمة الرئيسية بزراير جوه الرسالة
+    assert BOT.set_chat_menu_button.call_args.kwargs["chat_id"] == USER and isinstance(BOT.set_chat_menu_button.call_args.kwargs["menu_button"], MenuButtonCommands)
+    print("3d /start removes stale reply keyboard + resets chat menu button: OK")
+    for n in ("delete_my_commands", "set_my_commands", "set_chat_menu_button"): getattr(BOT, n).reset_mock()
+    app = MagicMock(); app.bot = BOT; app.bot_data = bd
+    await bot.reset_menus(app)
+    scopes = {type(c.kwargs["scope"]).__name__ for c in BOT.delete_my_commands.call_args_list}
+    assert scopes == {"BotCommandScopeDefault", "BotCommandScopeAllPrivateChats", "BotCommandScopeChat"} and BOT.delete_my_commands.call_count == 9
+    shown = [c.name if hasattr(c, "name") else c.command for c in BOT.set_my_commands.call_args_list[0].args[0]]
+    adm_shown = [c.command for c in BOT.set_my_commands.call_args_list[1].args[0]]
+    assert shown == ["start", "calc", "new", "help"] and "broadcast" in adm_shown and "import" in adm_shown
+    print("3e menus reset (all scopes/langs cleared) ->", shown, "| admin:", adm_shown)
+    bot.COMMAND_MENU = False; BOT.set_my_commands.reset_mock(); await bot.reset_menus(app)
+    assert not BOT.set_my_commands.called; bot.COMMAND_MENU = True; print("3f COMMAND_MENU=0 removes the menu entirely: OK")
+
+    # ================= 3g) استيراد المستخدمين القدام =================
+    OLD = """5464602559
+5063876517
+6808448615
+8298826687 8385259502, 1922421109
+5464602559
+12"""
+    assert admin.parse_ids(OLD) == [5464602559, 5063876517, 6808448615, 8298826687, 8385259502, 1922421109]   # مكرر/قصير بيتشال
+    u, _ = await press(ADMIN, "adm:imp"); assert ctx(ADMIN).user_data["awaiting"]["type"] == "import"
+    u = upd_msg(ADMIN, OLD); u.message.document = None; c = ctx(ADMIN); await bot.on_message(u, c)
+    assert "اتضاف 6" in u.message.reply_text.call_args.args[0] and "awaiting" not in c.user_data
+    assert store.users[5464602559]["imported"] and store.users[5464602559]["last_seen"] == 0
+    st = store.stats(); assert st["imported_pending"] == 6; print("3g import from pasted text: added 6 (dupes/short ignored), pending =", st["imported_pending"])
+    c = ctx(ADMIN); c.args = ["5464602559", "7777777777"]; u = upd_msg(ADMIN); await admin.cmd_import(u, c)
+    assert "اتضاف 1" in u.message.reply_text.call_args.args[0] and "1 كانوا موجودين" in u.message.reply_text.call_args.args[0]
+    # استيراد من ملف
+    u = upd_msg(ADMIN, None); u.message.document.file_size = 100
+    f = MagicMock(); f.download_as_bytearray = AsyncMock(return_value=bytearray("id\n9999999991\n9999999992\n".encode())); u.message.document.get_file = AsyncMock(return_value=f)
+    ctx(ADMIN).user_data["awaiting"] = {"type": "import"}; await bot.on_message(u, ctx(ADMIN))
+    assert "اتضاف 2" in u.message.reply_text.call_args.args[0]; print("3h import via /import args and via file: OK")
+    ctx(ADMIN).user_data["awaiting"] = {"type": "import"}; u = upd_msg(ADMIN, "مفيش أرقام"); u.message.document = None; await bot.on_message(u, ctx(ADMIN))
+    assert "مالقيتش" in u.message.reply_text.call_args.args[0] and ctx(ADMIN).user_data.get("awaiting")
+    assert 5464602559 in store.broadcast_targets(); print("3i bad import input keeps waiting; imported users are broadcast targets: OK")
+    u, _ = await press(ADMIN, "adm:panel"); assert "مستوردين" in last_text(u)
+    ctx(ADMIN).user_data.pop("awaiting", None)
+    # أول رسالة من مستورَد بتعدّيه لمستخدم نشط
+    BOT.get_chat_member = AsyncMock(return_value=member(ChatMemberStatus.MEMBER)); bd["sub_cache"] = {}
+    await send(5464602559, "/new"); assert store.users[5464602559]["last_seen"] > 0 and store.stats()["imported_pending"] == 8
+    print("3j imported user becomes active after first message: pending now", store.stats()["imported_pending"])
 
     # ================= 4) الحفظ بعد إعادة التشغيل =================
     store.mark(); await store.flush(BOT, force=True)                       # محلي + نسخة تيليجرام

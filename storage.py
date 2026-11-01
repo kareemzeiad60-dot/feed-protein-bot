@@ -159,7 +159,7 @@ class Store:
         u = self.users.get(uid)
         if u is None:
             u = {"name": "", "username": "", "joined": now(), "last_seen": now(), "calcs": 0,
-                 "blocked": False, "banned": False, "target": None,
+                 "blocked": False, "banned": False, "imported": False, "target": None,
                  "qty": dict(defaults or {}), "prices": {}, "recipes": {}}
             self.users[uid] = u
             self.dirty = True
@@ -173,6 +173,20 @@ class Store:
             u["blocked"] = False
             self.dirty = True
         return u
+
+    def import_ids(self, ids, defaults: dict):
+        """يضيف مستخدمين قدام (بالـ ID بس). يرجّع (اتضاف, كانوا موجودين)."""
+        added = existing = 0
+        for uid in dict.fromkeys(ids):
+            if uid in self.users:
+                existing += 1
+                continue
+            u = self.user(uid, defaults)
+            u["imported"], u["last_seen"] = True, 0
+            added += 1
+        if added:
+            self.dirty = True
+        return added, existing
 
     def mark(self):
         self.dirty = True
@@ -190,9 +204,10 @@ class Store:
         us = list(self.users.values())
         return {
             "total": len(us),
-            "new_24h": sum(1 for u in us if t - u["joined"] < 86400),
+            "new_24h": sum(1 for u in us if t - u["joined"] < 86400 and not u.get("imported")),
             "active_24h": sum(1 for u in us if t - u["last_seen"] < 86400),
             "active_7d": sum(1 for u in us if t - u["last_seen"] < 7 * 86400),
+            "imported_pending": sum(1 for u in us if u.get("imported") and u["last_seen"] == 0 and not u.get("blocked")),
             "blocked": sum(1 for u in us if u.get("blocked")),
             "banned": sum(1 for u in us if u.get("banned")),
             "calcs_total": sum(u.get("calcs", 0) for u in us),
