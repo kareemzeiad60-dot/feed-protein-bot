@@ -68,4 +68,11 @@ check_excel(qty, prices, "mixed feeds + default additives")
 only = {f.row: 0.0 for f in feeds}; only[by_en["Soybean Meal (44%)"].row] = 100; only[by_en["Molasses"].row] = 40
 check_excel(only, {}, "two ingredients only")
 check_excel({f.row: 10.0 + f.row for f in feeds}, {f.row: 1000.0 + f.row for f in feeds}, "all 21 ingredients")
+# ---- فوتر الإكسل (رابط البوت): موجود بعد الجدول بصفين، وما بيبوظش باقي الملف
+out = os.path.join(tempfile.mkdtemp(), "f.xlsx")
+build_workbook(T, only, out, recalc=True, footer=("🤖 اتحسبت بواسطة @feedbot_test", "https://t.me/feedbot_test?start=xlsx"))
+w = openpyxl.load_workbook(out).worksheets[0]
+assert w["A9"].value.endswith("@feedbot_test") and "t.me/feedbot_test" in w["A9"].hyperlink.target and w["B7"].value == "=SUM(B5:B6)"
+v = openpyxl.load_workbook(out, data_only=True).worksheets[0]; assert abs(v["I7"].value - 1) < 1e-9
+print("excel footer + hyperlink:", w["A9"].value, "->", w["A9"].hyperlink.target)
 print("ALL CORE TESTS OK")

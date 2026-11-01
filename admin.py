@@ -40,6 +40,7 @@ def panel_view(context):
         f"📥 مستوردين لسه ماكلّموش البوت: {s['imported_pending']}\n"
         f"🚫 عاملين بلوك للبوت: {s['blocked']}   |   ⛔ محظورين: {s['banned']}\n\n"
         f"🧮 عمليات الحساب: {s['calcs_total']} (النهاردة {s['calcs_today']})\n"
+        f"📈 المصادر: " + (" • ".join(f"{k} {v}" for k, v in s["sources"]) or "—") + "\n"
         f"📣 هيوصلهم البرودكاست: {len(_store(context).broadcast_targets())}"
     )
     kb = Markup([
@@ -229,6 +230,24 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     reply_markup=CANCEL_KB)
 
 
+SOURCES = {"fb": "فيسبوك", "wa": "واتساب", "tg": "تيليجرام", "yt": "يوتيوب", "tt": "تيك توك",
+           "ig": "إنستجرام", "x": "تويتر/X", "grp": "جروبات"}
+
+
+async def cmd_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(context, update.effective_user.id):
+        return
+    uname = context.application.bot_data.get("username")
+    if not uname:
+        await update.message.reply_text("مش عارف يوزر البوت لسه، جرّب بعد شوية.")
+        return
+    lines = "\n".join(f"{name}: https://t.me/{uname}?start={key}" for key, name in SOURCES.items())
+    await update.message.reply_text(
+        "🔗 لينكات التتبع — كل لينك بيسجّل المستخدم الجديد على مصدره وبيظهر في لوحة الأدمن:\n\n" + lines +
+        "\n\nتقدر تعمل أي كود تاني للحملة: ?start=اسم_حملة (حروف إنجليزي وأرقام و _ بس).",
+        disable_web_page_preview=True)
+
+
 async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(context, update.effective_user.id):
         await send_users_csv(update.message, context)
@@ -264,4 +283,4 @@ async def cmd_unban(update, context):
 
 def handlers():
     return [CommandHandler("admin", cmd_admin), CommandHandler("broadcast", cmd_broadcast),
-            CommandHandler("users", cmd_users), CommandHandler("import", cmd_import), CommandHandler("ban", cmd_ban), CommandHandler("unban", cmd_unban)]
+            CommandHandler("users", cmd_users), CommandHandler("import", cmd_import), CommandHandler("links", cmd_links), CommandHandler("ban", cmd_ban), CommandHandler("unban", cmd_unban)]

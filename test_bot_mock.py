@@ -184,6 +184,24 @@ async def main():
     await send(5464602559, "/new"); assert store.users[5464602559]["last_seen"] > 0 and store.stats()["imported_pending"] == 8
     print("3j imported user becomes active after first message: pending now", store.stats()["imported_pending"])
 
+    # ================= 3k) تتبع المصدر + المشاركة + اللينكات =================
+    BOT.get_chat_member = AsyncMock(return_value=member(ChatMemberStatus.MEMBER)); bd["sub_cache"] = {}
+    for uid, text in ((300, "/start fb"), (301, "/start yt_campaign1"), (302, "/start bad payload!"), (303, "/start")):
+        await bot.gate(upd_msg(uid, text), ctx(uid))
+    await bot.gate(upd_msg(300, "/start tt"), ctx(300))                           # ما يغيّرش المصدر الأصلي
+    src = {u: store.users[u]["source"] for u in (300, 301, 302, 303, 5464602559)}
+    assert src == {300: "fb", 301: "yt_campaign1", 302: "organic", 303: "organic", 5464602559: "imported"}, src
+    u, _ = await press(ADMIN, "adm:panel"); line = [l for l in last_text(u).splitlines() if "المصادر" in l][0]
+    assert "fb 1" in line; print("3k source tracking:", src, "|", line)
+    bot.BOT_USERNAME = "feedbot_test"; bd["username"] = "feedbot_test"
+    t, kb = bot.menu_view(store.users[USER], False); urls = [b.url for row in kb.inline_keyboard for b in row if b.url]
+    assert len(urls) == 1 and urls[0].startswith("https://t.me/share/url?url=https%3A%2F%2Ft.me%2Ffeedbot_test%3Fstart%3Dshare"), urls
+    c = ctx(ADMIN); u = upd_msg(ADMIN); await admin.cmd_links(u, c); txt = u.message.reply_text.call_args.args[0]
+    assert "https://t.me/feedbot_test?start=fb" in txt and "?start=wa" in txt
+    u, _ = await press(USER, "calc"); cap = u.callback_query.message.reply_document.call_args.kwargs["caption"]; assert "@feedbot_test" in cap
+    print("3l share button url + /links + caption footer: OK")
+    bot.BOT_USERNAME = ""; bot.WATERMARK = True
+
     # ================= 4) الحفظ بعد إعادة التشغيل =================
     store.mark(); await store.flush(BOT, force=True)                       # محلي + نسخة تيليجرام
     assert BOT.send_document.called and BOT.pin_chat_message.called

@@ -316,7 +316,7 @@ def _compact_sheet(ws, table_cols: int, selected: list, keep_own_style: set):
     return new_of
 
 
-def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: bool = False, prices: dict = None) -> str:
+def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: bool = False, prices: dict = None, footer: tuple = None) -> str:
     """
     بينسخ القالب ويسيب فيه الخامات اللي كميتها > 0 بس (الباقي بيتشال من الشيتين)،
     ويكتب الكميات في العمود B والأسعار في العمود K. كل المعادلات (نسب المكونات، كجم/طن،
@@ -334,6 +334,11 @@ def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: 
         price = (prices or {}).get(old, 0)
         if price and price > 0:
             ws1.cell(new, PRICE_COL).value = price
+    if footer:                                                      # (نص, لينك) تحت الجدول — الملف بيتشاير في الجروبات
+        from openpyxl.styles import Font
+        cell = ws1.cell(FIRST_ROW + len(selected) + 2, 1)
+        cell.value, cell.hyperlink = footer
+        cell.font = Font(italic=True, color="0563C1", underline="single", size=10)
     wb.calculation.fullCalcOnLoad = True
     wb.save(out_path)
     if recalc:

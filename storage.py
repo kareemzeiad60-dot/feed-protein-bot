@@ -6,6 +6,7 @@
   ده اللي بيخلّي البيانات تعدّي إعادة التشغيل على GitHub Actions (اللي بتمسح القرص كل مرة).
 """
 import asyncio
+from collections import Counter
 import json
 import logging
 import os
@@ -155,18 +156,18 @@ class Store:
                 return
 
     # ---------------- بيانات المستخدمين ----------------
-    def user(self, uid: int, defaults: dict = None) -> dict:
+    def user(self, uid: int, defaults: dict = None, source: str = None) -> dict:
         u = self.users.get(uid)
         if u is None:
             u = {"name": "", "username": "", "joined": now(), "last_seen": now(), "calcs": 0,
-                 "blocked": False, "banned": False, "imported": False, "target": None,
+                 "blocked": False, "banned": False, "imported": False, "source": source or "organic", "target": None,
                  "qty": dict(defaults or {}), "prices": {}, "recipes": {}}
             self.users[uid] = u
             self.dirty = True
         return u
 
-    def touch(self, uid: int, name: str, username: str, defaults: dict) -> dict:
-        u = self.user(uid, defaults)
+    def touch(self, uid: int, name: str, username: str, defaults: dict, source: str = None) -> dict:
+        u = self.user(uid, defaults, source)
         u["name"], u["username"] = name or "", username or ""
         if now() - u.get("last_seen", 0) > 60 or u.get("blocked"):
             u["last_seen"] = now()
@@ -182,7 +183,7 @@ class Store:
                 existing += 1
                 continue
             u = self.user(uid, defaults)
-            u["imported"], u["last_seen"] = True, 0
+            u["imported"], u["last_seen"], u["source"] = True, 0, "imported"
             added += 1
         if added:
             self.dirty = True
@@ -208,6 +209,7 @@ class Store:
             "active_24h": sum(1 for u in us if t - u["last_seen"] < 86400),
             "active_7d": sum(1 for u in us if t - u["last_seen"] < 7 * 86400),
             "imported_pending": sum(1 for u in us if u.get("imported") and u["last_seen"] == 0 and not u.get("blocked")),
+            "sources": Counter(u.get("source", "organic") for u in us).most_common(8),
             "blocked": sum(1 for u in us if u.get("blocked")),
             "banned": sum(1 for u in us if u.get("banned")),
             "calcs_total": sum(u.get("calcs", 0) for u in us),

@@ -12,6 +12,7 @@ import re
 import shutil
 import tempfile
 import time
+from urllib.parse import quote
 
 from telegram import (BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, BotCommandScopeDefault,
                       InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, MenuButtonCommands, MenuButtonDefault,
@@ -37,6 +38,9 @@ CHANNEL_URL = f"https://t.me/{CHANNEL.lstrip('@')}"
 REQUIRE_SUB = os.environ.get("REQUIRE_SUBSCRIPTION", "1") != "0"
 # قائمة الأوامر اللي جنب خانة الكتابة (زرار Menu). COMMAND_MENU=0 يشيلها خالص.
 COMMAND_MENU = os.environ.get("COMMAND_MENU", "1") != "0"
+WATERMARK = os.environ.get("WATERMARK", "1") != "0"        # رابط البوت تحت جدول الإكسل وفي الكابشن
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "")          # بيتعرف تلقائياً من تيليجرام عند التشغيل
+SHARE_TEXT = "🐄 بوت بيحسب البروتين ونسب المكونات وتكلفة العليقة ويبعتلك ملف إكسل جاهز — جرّبه!"
 # إعادة الحساب بـ LibreOffice (لو متسطّب) عشان القيم تظهر في معاينة الموبايل. اقفلها بـ RECALC=0
 RECALC = os.environ.get("RECALC", "1") != "0" and bool(shutil.which("soffice") or shutil.which("libreoffice"))
 FEEDS = fc.load_feeds(TEMPLATE)
@@ -118,6 +122,9 @@ def menu_view(u, admin_flag=False, title="🧮 الخلطة الحالية:"):
         [Btn("💾 حفظ الخلطة", callback_data="sv"), Btn("📂 خلطاتي", callback_data="rc")],
         [Btn("🔄 ابدأ من جديد", callback_data="reset")],
     ]
+    if BOT_USERNAME:
+        link = quote(f"https://t.me/{BOT_USERNAME}?start=share", safe="")
+        rows[-1].append(Btn("📣 شارك البوت", url=f"https://t.me/share/url?url={link}&text={quote(SHARE_TEXT)}"))
     if admin_flag:
         rows.append([Btn("🛠 لوحة الأدمن", callback_data="adm:panel")])
     return text, Markup(rows)
@@ -247,11 +254,21 @@ SUB_KB = Markup([[Btn("📢 اشترك في القناة", url=CHANNEL_URL)],
 SUB_TEXT = f"📢 لازم تشترك في القناة الأول عشان تستخدم البوت:\n{CHANNEL_URL}\n\nاشترك وبعدين دوس «✅ اشتركت — تحقق»."
 
 
+def _start_payload(update: Update):
+    """كود المصدر من لينك زي t.me/bot?start=fb (بيتسجّل مرة واحدة عند أول دخول)."""
+    m = update.message
+    if m and m.text and m.text.startswith("/start"):
+        parts = m.text.split(maxsplit=1)
+        if len(parts) == 2 and re.fullmatch(r"[A-Za-z0-9_-]{1,24}", parts[1].strip()):
+            return parts[1].strip().lower()
+    return None
+
+
 async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None or user.is_bot:
         return
-    u = S(context).touch(user.id, user.full_name, user.username, fc.default_quantities(FEEDS))
+    u = S(context).touch(user.id, user.full_name, user.username, fc.default_quantities(FEEDS), _start_payload(update))
     if is_admin(context, user.id):
         return
     msg, q = update.message, update.callback_query
@@ -331,12 +348,16 @@ async def _send_file(chat_message, update, context: ContextTypes.DEFAULT_TYPE):
         return
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "Feed_Calculation.xlsx")
-        await asyncio.to_thread(fc.build_workbook, TEMPLATE, u["qty"], path, RECALC, u["prices"])
+        footer = ((f"🤖 اتحسبت بواسطة بوت تيليجرام @{BOT_USERNAME} — t.me/{BOT_USERNAME}", f"https://t.me/{BOT_USERNAME}?start=xlsx")
+                  if BOT_USERNAME and WATERMARK else None)
+        await asyncio.to_thread(fc.build_workbook, TEMPLATE, u["qty"], path, RECALC, u["prices"], footer)
         caption = (f"🥩 البروتين: {fmt(res['protein_kg'])} كجم\n"
                    f"📊 نسبة البروتين الخام: {res['cp_pct']:.2f}%\n"
                    f"⚖️ الوزن الكلي: {fmt(res['total_weight'])} كجم")
         if res["cost_per_ton"] is not None:
             caption += f"\n💵 تكلفة طن الخلطة: {fmt(res['cost_per_ton'])} جنيه"
+        if BOT_USERNAME and WATERMARK:
+            caption += f"\n\n🤖 @{BOT_USERNAME}"
         with open(path, "rb") as fh:
             await chat_message.reply_document(fh, filename="Feed_Calculation.xlsx", caption=caption)
     S(context).count_calc(uid)
@@ -541,6 +562,12 @@ async def post_init(app: Application):
             break
         await asyncio.sleep(2)
     app.bot_data["flush_task"] = asyncio.create_task(flush_loop(app))
+    global BOT_USERNAME
+    try:
+        BOT_USERNAME = BOT_USERNAME or (await app.bot.get_me()).username or ""
+    except TelegramError as e:
+        log.warning("get_me failed: %s", e)
+    app.bot_data["username"] = BOT_USERNAME
     await reset_menus(app)
 
 
@@ -549,7 +576,7 @@ async def reset_menus(app: Application):
     bot, admins = app.bot, app.bot_data["admin_ids"]
     base = [BotCommand("start", "القائمة الرئيسية"), BotCommand("calc", "احسب وابعت الملف"),
             BotCommand("new", "خلطة جديدة"), BotCommand("help", "مساعدة")]
-    extra = [BotCommand("admin", "لوحة الأدمن"), BotCommand("broadcast", "رسالة جماعية"), BotCommand("import", "استيراد مستخدمين")]
+    extra = [BotCommand("admin", "لوحة الأدمن"), BotCommand("broadcast", "رسالة جماعية"), BotCommand("import", "استيراد مستخدمين"), BotCommand("links", "لينكات التتبع")]
     try:
         for scope in [BotCommandScopeDefault(), BotCommandScopeAllPrivateChats()] + [BotCommandScopeChat(a) for a in admins]:
             for lang in (None, "ar", "en"):
