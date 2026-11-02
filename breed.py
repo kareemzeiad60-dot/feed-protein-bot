@@ -59,6 +59,7 @@ class BreedClassifier:
         try:
             os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
             import numpy as np
+            from PIL import Image                       # لازم يكون متسطّب (مش جاي مع TensorFlow)
             import tensorflow as tf                     # استيراد متأخر عشان البوت يبدأ بسرعة من غيره
             model = tf.keras.models.load_model(path, compile=False)
             with open(labels_path, encoding="utf-8") as fh:
@@ -66,13 +67,17 @@ class BreedClassifier:
             outputs = int(model.output_shape[-1])
             if outputs != len(labels):                   # حماية من ملفات مش متطابقة (حصلت في نسخ قديمة)
                 raise ValueError(f"model has {outputs} outputs but labels.json has {len(labels)} entries")
-            model.predict(np.zeros((1, *IMG_SIZE, 3), np.float32), verbose=0)     # تسخين
-            self.model, self.labels, self.error = model, labels, None
-            log.info("breed model loaded: %d breeds %s", len(labels), labels)
+            self.model, self.labels = model, labels
+            buf = io.BytesIO()                                              # اختبار ذاتي للخط كله: فتح صورة ← تجهيز ← موديل
+            Image.new("RGB", (64, 48), (120, 120, 120)).save(buf, "JPEG")
+            self.predict(buf.getvalue())                                    # وبيسخّن الموديل كمان
+            self.error = None
+            log.info("breed model loaded and self-tested: %d breeds %s", len(labels), labels)
             return True
         except Exception as e:
-            self.error = str(e)
-            log.warning("breed model failed to load: %s", e)
+            self.model, self.labels = None, []              # أي فشل = الميزة تتقفل بصراحة بدل ما تقع عند كل صورة
+            self.error = f"{type(e).__name__}: {e}"
+            log.warning("breed model disabled: %s", self.error)
             return False
 
     def predict(self, image_bytes: bytes):

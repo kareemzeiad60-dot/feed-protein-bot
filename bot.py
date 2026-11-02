@@ -593,9 +593,12 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = bytes(await f.download_as_bytearray())
         async with _breed_sem:
             preds = await asyncio.to_thread(CLASSIFIER.predict, data)
-    except Exception:
+    except Exception as e:
         log.exception("breed prediction failed")
-        await wait.edit_text("مقدرتش أقرا الصورة دي 😕 ابعت صورة JPG أو PNG واضحة.")
+        text = "مقدرتش أقرا الصورة دي 😕 ابعت صورة JPG أو PNG واضحة."
+        if is_admin(context, uid):                       # الأدمن بيشوف السبب التقني (عشان لوج Actions مش دايماً متاح)
+            text += f"\n\n🛠 {type(e).__name__}: {str(e)[:300]}"
+        await wait.edit_text(text)
         return
     u["breed_scans"] = u.get("breed_scans", 0) + 1
     S(context).mark()
