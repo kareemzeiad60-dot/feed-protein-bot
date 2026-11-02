@@ -26,8 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 358
     env:
-      # ميزة التعرّف على السلالة بتشتغل بس لو secret باسم MODEL_REPO_TOKEN موجود (توكن بيقرا الريبو الخاص بتاع الموديل)
-      HAS_MODEL: ${{ secrets.MODEL_REPO_TOKEN != '' }}
+      # ميزة التعرّف على السلالة بتشتغل بس لو secret باسم MODEL_KEY موجود (مفتاح فك تشفير الموديل)
+      HAS_MODEL_KEY: ${{ secrets.MODEL_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,33 +40,27 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # الموديل في ريبو خاص (مش بنرفعه على الريبو العام): بنسحب منه الملفين المطلوبين بس وقت التشغيل
-      # ميزة اختيارية: لو السحب فشل (مثلاً التوكن مالوش صلاحية) البوت بيكمّل شغل من غيرها بدل ما يقف
-      - name: Fetch cattle breed model (private repo)
+      # موديل السلالة متشفّر ومرفوع في نفس الريبو (models/cattle_model.h5.enc)، وبنفكه بالمفتاح السري MODEL_KEY.
+      # ميزة اختيارية: لو أي خطوة فيها فشلت البوت بيكمّل شغل من غيرها بدل ما يقف.
+      - name: Decrypt cattle breed model
         id: model
-        if: env.HAS_MODEL == 'true'
+        if: env.HAS_MODEL_KEY == 'true'
         continue-on-error: true
-        uses: actions/checkout@v4
-        with:
-          repository: kareemzeiad60-dot/111122
-          token: ${{ secrets.MODEL_REPO_TOKEN }}
-          path: _model_src
-          sparse-checkout: artifacts/cattle-predict
-          persist-credentials: false
-
-      - name: Warn if the model could not be fetched
-        if: env.HAS_MODEL == 'true' && steps.model.outcome == 'failure'
-        run: echo "::warning::مقدرتش أسحب موديل السلالة من kareemzeiad60-dot/111122 — راجع صلاحيات MODEL_REPO_TOKEN. البوت شغال من غير الميزة دي."
-
-      - name: Prepare cattle breed model
-        if: env.HAS_MODEL == 'true' && steps.model.outcome == 'success'
-        continue-on-error: true
+        env:
+          MODEL_KEY: ${{ secrets.MODEL_KEY }}
         run: |
-          mkdir -p models
-          cp _model_src/artifacts/cattle-predict/cattle_model.h5 _model_src/artifacts/cattle-predict/labels.json models/
-          pip install -r requirements-cattle.txt
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in models/cattle_model.h5.enc -out models/cattle_model.h5 -pass env:MODEL_KEY
+          cd models && sha256sum -c cattle_model.h5.sha256
 
-      # اختياري: بيخلّي أرقام الإكسل تظهر في معاينة الموبايل (RECALC)
+      - name: Warn if the model could not be prepared
+        if: env.HAS_MODEL_KEY == 'true' && steps.model.outcome == 'failure'
+        run: echo "::warning::مقدرتش أفك تشفير موديل السلالة — راجع secret MODEL_KEY. البوت شغال من غير الميزة دي."
+
+      - name: Install TensorFlow (cattle breed model)
+        if: steps.model.outcome == 'success'
+        continue-on-error: true
+        run: pip install -r requirements-cattle.txt
+
       - name: Install LibreOffice
         run: |
           sudo apt-get update -qq

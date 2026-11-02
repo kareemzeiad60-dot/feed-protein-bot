@@ -48,9 +48,10 @@ Settings ← Secrets and variables ← **Actions** ← New repository secret: `B
 ## ميزة التعرّف على السلالة
 المستخدم يبعت صورة (أو يدوس «🐄 تعرّف على السلالة») والبوت يرد بأعلى 3 سلالات ونسبة ثقة الموديل. السلالات: أنجس، إيرشاير، براون سويس، هيرفورد، هولشتاين فريزيان، جعفرآبادي، جيرسي، ريد دين، سيمنتال.
 
-- الموديل **مش مرفوع على الريبو العام**. الـ workflow بيسحب `cattle_model.h5` و `labels.json` من الريبو الخاص `kareemzeiad60-dot/111122` (مجلد `artifacts/cattle-predict`) وقت التشغيل.
-- لازم secret باسم **`MODEL_REPO_TOKEN`**: توكن GitHub بيقرا الريبو ده (Fine-grained: Repository access ← الريبو ده بس، Permissions ← Contents: **Read-only**، مدة صلاحية طويلة). من غيره البوت يشتغل عادي والميزة تتقفل.
-- تشغيل عادي: حط `cattle_model.h5` و`labels.json` في `models/` (أو `CATTLE_MODEL_DIR`) و`pip install -r requirements-cattle.txt`.
+- الموديل مرفوع في نفس الريبو **مشفّر** (`models/cattle_model.h5.enc`، AES-256) فمفيش حد يقدر يستخدمه من غير المفتاح. الـ workflow بيفكه وقت التشغيل بمفتاح سري محفوظ في secret باسم **`MODEL_KEY`** ويتأكد من سلامته (`sha256`).
+- من غير `MODEL_KEY` (أو لو فك التشفير فشل) البوت يشتغل عادي والميزة تتقفل وبيظهر تحذير في الـ run.
+- تغيير الموديل: `./encrypt_model.sh path/to/cattle_model.h5` بيشفّره وبيطبعلك مفتاح جديد تحطه في `MODEL_KEY`، وبعدين ارفع الملفين الجداد.
+- تشغيل عادي (من غير Actions): فُك التشفير بنفس أمر الـ workflow أو حط `cattle_model.h5` مباشرة في `models/` وسطّب `pip install -r requirements-cattle.txt`.
 - الموديل مفيهوش خانة «مش بقرة»، فأي صورة هيحاول يطابقها على السلالات التسعة. الرد بيوضّح كده.
 
 ## الاختبارات
