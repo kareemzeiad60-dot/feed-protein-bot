@@ -40,6 +40,7 @@ def panel_view(context):
         f"📥 مستوردين لسه ماكلّموش البوت: {s['imported_pending']}\n"
         f"🚫 عاملين بلوك للبوت: {s['blocked']}   |   ⛔ محظورين: {s['banned']}\n\n"
         f"🧮 عمليات الحساب: {s['calcs_total']} (النهاردة {s['calcs_today']})\n"
+        f"🐄 عمليات تعرّف السلالة: {s['scans_total']}\n"
         f"📈 المصادر: " + (" • ".join(f"{k} {v}" for k, v in s["sources"]) or "—") + "\n"
         f"📣 هيوصلهم البرودكاست: {len(_store(context).broadcast_targets())}"
     )

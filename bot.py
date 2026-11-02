@@ -23,6 +23,7 @@ from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHand
                           ContextTypes, MessageHandler, TypeHandler, filters)
 
 import admin
+import breed
 import feed_core as fc
 from storage import MAX_RECIPES, Store
 
@@ -44,6 +45,12 @@ SHARE_TEXT = "🐄 بوت بيحسب البروتين ونسب المكونات 
 # إعادة الحساب بـ LibreOffice (لو متسطّب) عشان القيم تظهر في معاينة الموبايل. اقفلها بـ RECALC=0
 RECALC = os.environ.get("RECALC", "1") != "0" and bool(shutil.which("soffice") or shutil.which("libreoffice"))
 FEEDS = fc.load_feeds(TEMPLATE)
+# موديل التعرّف على السلالة (اختياري: لو الملفات أو TensorFlow مش موجودين الميزة بتتقفل لوحدها)
+CLASSIFIER = breed.BreedClassifier(os.environ.get("CATTLE_MODEL_DIR", os.path.join(BASE, "models")),
+                                   os.environ.get("CATTLE_MODEL_FILE", "cattle_model.h5"))
+BREED_COOLDOWN = 4                  # ثواني بين صورة وصورة لنفس المستخدم
+MAX_IMAGE_BYTES = 15_000_000
+_breed_sem = asyncio.Semaphore(1)   # تحليل صورة واحدة في المرة (الموديل بياخد CPU)
 BY_ROW = {f.row: f for f in FEEDS}
 PAGE = 8                                  # عدد الخامات في الصفحة الواحدة
 MAX_QTY = 1_000_000
@@ -128,6 +135,7 @@ def menu_view(u, admin_flag=False, title="🧮 الخلطة الحالية:"):
     rows = [
         [Btn("➕ إضافة / تعديل خامة", callback_data="a:0")],
         [Btn("✅ احسب وابعتلي الملف", callback_data="calc")],
+        [Btn("🐄 تعرّف على السلالة من صورة", callback_data="br")],
         [Btn("🎯 البروتين المستهدف", callback_data="tg"), Btn("⚖️ تحجيم الخلطة", callback_data="sc")],
         [Btn("💾 حفظ الخلطة", callback_data="sv"), Btn("📂 خلطاتي", callback_data="rc")],
         [Btn("🔄 ابدأ من جديد", callback_data="reset")],
@@ -180,6 +188,18 @@ def qty_view(u, row: int):
         [Btn("📋 خامة تانية", callback_data=f"a:{(row - fc.FIRST_ROW) // PAGE}"), Btn("✅ رجوع للخلطة", callback_data="m")],
     ])
     return text, kb
+
+
+BREED_KB = Markup([[Btn("📸 صورة تانية", callback_data="br"), Btn("🔙 القائمة", callback_data="m")]])
+
+
+def breed_view():
+    if CLASSIFIER.available:
+        text = ("📸 ابعتلي صورة واضحة للحيوان (جنب كامل ولو ينفع في إضاءة كويسة) وهقولك السلالة المتوقعة.\n"
+                "تقدر تبعتها كصورة عادية أو كملف.")
+    else:
+        text = "🐄 ميزة التعرّف على السلالة مش متاحة دلوقتي. جرّب بعد شوية."
+    return rtl(text), Markup([[Btn("🔙 رجوع", callback_data="m")]])
 
 
 def target_view(u):
@@ -415,6 +435,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             u["qty"] = fc.default_quantities(FEEDS)
             store.mark()
             await _show(q, menu_view(u, adm, "تمام، بدأنا من جديد ✨"))
+        elif kind == "br":
+            await _show(q, breed_view())
         elif kind == "tg":
             if rest == "":
                 await _show(q, target_view(u))
@@ -545,6 +567,41 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text(t, reply_markup=kb)
 
 
+async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """صورة (أو ملف صورة) ← تعرّف على السلالة."""
+    aw = context.user_data.get("awaiting")
+    if aw and aw["type"] == "bc":                       # الأدمن بيبعت صورة للبرودكاست
+        await on_message(update, context)
+        return
+    msg = update.message
+    u, uid = me(update, context)
+    if not CLASSIFIER.available:
+        await msg.reply_text(breed_view()[0])
+        return
+    now = time.time()
+    if now - context.user_data.get("last_breed", 0) < BREED_COOLDOWN:
+        await msg.reply_text("استنى كام ثانية وابعت الصورة اللي بعدها ⏳")
+        return
+    context.user_data["last_breed"] = now
+    file_obj = msg.photo[-1] if msg.photo else msg.document
+    if (file_obj.file_size or 0) > MAX_IMAGE_BYTES:
+        await msg.reply_text("الصورة كبيرة أوي 😅 ابعتها كصورة عادية أو صغّر حجمها.")
+        return
+    wait = await msg.reply_text("⏳ جاري تحليل الصورة...")
+    try:
+        f = await file_obj.get_file()
+        data = bytes(await f.download_as_bytearray())
+        async with _breed_sem:
+            preds = await asyncio.to_thread(CLASSIFIER.predict, data)
+    except Exception:
+        log.exception("breed prediction failed")
+        await wait.edit_text("مقدرتش أقرا الصورة دي 😕 ابعت صورة JPG أو PNG واضحة.")
+        return
+    u["breed_scans"] = u.get("breed_scans", 0) + 1
+    S(context).mark()
+    await wait.edit_text(rtl(breed.format_result(preds, len(CLASSIFIER.labels))), reply_markup=BREED_KB)
+
+
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
     log.exception("Unhandled error", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
@@ -580,7 +637,13 @@ async def post_init(app: Application):
     except TelegramError as e:
         log.warning("get_me failed: %s", e)
     app.bot_data["username"] = BOT_USERNAME
+    app.bot_data["breed_task"] = asyncio.create_task(_load_breed())      # في الخلفية عشان البوت يرد فوراً
     await reset_menus(app)
+
+
+async def _load_breed():
+    ok = await asyncio.to_thread(CLASSIFIER.load)
+    log.info("breed recognition: %s", "ON" if ok else f"OFF ({CLASSIFIER.error})")
 
 
 async def reset_menus(app: Application):
@@ -627,6 +690,7 @@ def build_app(token: str) -> Application:
     for h in admin.handlers():
         app.add_handler(h)
     app.add_handler(CallbackQueryHandler(on_button))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
     return app

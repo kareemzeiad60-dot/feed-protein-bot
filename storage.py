@@ -213,6 +213,7 @@ class Store:
             "blocked": sum(1 for u in us if u.get("blocked")),
             "banned": sum(1 for u in us if u.get("banned")),
             "calcs_total": sum(u.get("calcs", 0) for u in us),
+            "scans_total": sum(u.get("breed_scans", 0) for u in us),
             "calcs_today": self.daily.get(today(), {}).get("calcs", 0),
         }
 

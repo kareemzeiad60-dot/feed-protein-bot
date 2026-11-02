@@ -202,6 +202,48 @@ async def main():
     print("3l share button url + /links + caption footer: OK")
     bot.BOT_USERNAME = ""; bot.WATERMARK = True
 
+    # ================= 3m) التعرّف على السلالة (بموديل مزيّف) =================
+    BOT.get_chat_member = AsyncMock(return_value=member(ChatMemberStatus.MEMBER)); bd["sub_cache"] = {}
+    t, kb = bot.menu_view(store.users[USER], False)
+    assert any(b.callback_data == "br" for row in kb.inline_keyboard for b in row); print("3m menu has breed button: OK")
+    class Fake:
+        available = True; labels = ["Angus", "Jersey", "Simmental"]; calls = 0; raise_exc = False
+        def predict(self, data):
+            Fake.calls += 1
+            if Fake.raise_exc: raise ValueError("bad image")
+            return [("Jersey", 0.62), ("Angus", 0.3), ("Simmental", 0.08)]
+    def photo_update(uid, size=1000, doc=False):
+        u = upd_msg(uid, None); u.effective_user.is_bot = False
+        f = MagicMock(); f.download_as_bytearray = AsyncMock(return_value=bytearray(b"img"))
+        big = MagicMock(); big.file_size = size; big.get_file = AsyncMock(return_value=f)
+        u.message.photo = [] if doc else [MagicMock(), big]; u.message.document = big if doc else None
+        wait = MagicMock(); wait.edit_text = AsyncMock(); u.message.reply_text = AsyncMock(return_value=wait); u.wait = wait
+        return u
+    async def photo(uid, **kw):
+        u = photo_update(uid, **kw); c = ctx(uid)
+        try: await bot.gate(u, c)
+        except ApplicationHandlerStop: return u, "STOPPED"
+        await bot.on_photo(u, c); return u, None
+    bot.CLASSIFIER = Fake()
+    u, _ = await photo(USER); out = u.wait.edit_text.call_args.args[0]
+    assert "جيرسي" in out and "62.0%" in out and "ثقة الموديل متوسطة" in out and store.users[USER]["breed_scans"] == 1
+    print("3n photo -> breed result:", out.splitlines()[2:5])
+    u, _ = await photo(USER); assert "استنى" in u.message.reply_text.call_args.args[0] and Fake.calls == 1; print("3o cooldown blocks rapid second photo: OK")
+    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, doc=True); assert Fake.calls == 2; print("3p image sent as document works: OK")
+    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, size=20_000_000); assert "كبيرة" in u.message.reply_text.call_args.args[0] and Fake.calls == 2
+    ctx(USER).user_data["last_breed"] = 0; Fake.raise_exc = True; u, _ = await photo(USER); assert "مقدرتش" in u.wait.edit_text.call_args.args[0]; Fake.raise_exc = False
+    print("3q oversize + decode failure handled: OK")
+    bot.CLASSIFIER = MagicMock(available=False)
+    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER); assert "مش متاحة" in u.message.reply_text.call_args.args[0]
+    u, _ = await press(USER, "br"); assert "مش متاحة" in last_text(u)
+    bot.CLASSIFIER = Fake(); u, _ = await press(USER, "br"); assert "ابعتلي صورة" in last_text(u); print("3r unavailable model -> polite message; prompt screen OK")
+    # الأدمن بيبعت صورة للبرودكاست: لازم تروح للبرودكاست مش للتعرّف
+    ctx(ADMIN).user_data["awaiting"] = {"type": "bc"}; calls_before = Fake.calls
+    u = photo_update(ADMIN); BOT.copy_message = AsyncMock(); await bot.on_photo(u, ctx(ADMIN))
+    assert Fake.calls == calls_before and ctx(ADMIN).user_data.get("bc_src"); print("3s admin photo during broadcast goes to broadcast: OK")
+    st = store.stats(); assert st["scans_total"] == 2; u, _ = await press(ADMIN, "adm:panel"); assert "عمليات تعرّف السلالة: 2" in last_text(u)
+    bot.CLASSIFIER = MagicMock(available=False)
+
     # ================= 4) الحفظ بعد إعادة التشغيل =================
     store.mark(); await store.flush(BOT, force=True)                       # محلي + نسخة تيليجرام
     assert BOT.send_document.called and BOT.pin_chat_message.called
