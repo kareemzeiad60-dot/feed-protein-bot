@@ -41,8 +41,11 @@ jobs:
         run: pip install -r requirements.txt
 
       # الموديل في ريبو خاص (مش بنرفعه على الريبو العام): بنسحب منه الملفين المطلوبين بس وقت التشغيل
+      # ميزة اختيارية: لو السحب فشل (مثلاً التوكن مالوش صلاحية) البوت بيكمّل شغل من غيرها بدل ما يقف
       - name: Fetch cattle breed model (private repo)
+        id: model
         if: env.HAS_MODEL == 'true'
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: kareemzeiad60-dot/111122
@@ -51,8 +54,13 @@ jobs:
           sparse-checkout: artifacts/cattle-predict
           persist-credentials: false
 
+      - name: Warn if the model could not be fetched
+        if: env.HAS_MODEL == 'true' && steps.model.outcome == 'failure'
+        run: echo "::warning::مقدرتش أسحب موديل السلالة من kareemzeiad60-dot/111122 — راجع صلاحيات MODEL_REPO_TOKEN. البوت شغال من غير الميزة دي."
+
       - name: Prepare cattle breed model
-        if: env.HAS_MODEL == 'true'
+        if: env.HAS_MODEL == 'true' && steps.model.outcome == 'success'
+        continue-on-error: true
         run: |
           mkdir -p models
           cp _model_src/artifacts/cattle-predict/cattle_model.h5 _model_src/artifacts/cattle-predict/labels.json models/
