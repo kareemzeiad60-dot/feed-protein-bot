@@ -1,4 +1,4 @@
-import os, shutil, subprocess, tempfile, openpyxl
+import sys, os, shutil, subprocess, tempfile, openpyxl
 from feed_core import *
 
 T = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Feed_Calculator_Bilingual.xlsx")
@@ -75,4 +75,12 @@ w = openpyxl.load_workbook(out).worksheets[0]
 assert w["A9"].value.endswith("@feedbot_test") and "t.me/feedbot_test" in w["A9"].hyperlink.target and w["B7"].value == "=SUM(B5:B6)"
 v = openpyxl.load_workbook(out, data_only=True).worksheets[0]; assert abs(v["I7"].value - 1) < 1e-9
 print("excel footer + hyperlink:", w["A9"].value, "->", w["A9"].hyperlink.target)
+# ---- انحدار: البوت لازم يشتغل من غير numpy / Pillow / TensorFlow (زي requirements.txt لوحده على GitHub Actions)
+import subprocess
+code = ("import sys\nfor m in ('numpy','PIL','tensorflow','keras'): sys.modules[m] = None\n"
+        "import bot, breed\nassert not bot.CLASSIFIER.load() and not bot.CLASSIFIER.available\n"
+        "assert 'نتيجة' in breed.format_result([('Angus', .9), ('Jersey', .05), ('Red Dane', .03)], 9)\nprint('ok')")
+r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=os.path.dirname(T) or ".")
+assert r.returncode == 0 and r.stdout.strip() == "ok", r.stderr[-600:]
+print("bot imports and runs without numpy/Pillow/TensorFlow: OK")
 print("ALL CORE TESTS OK")

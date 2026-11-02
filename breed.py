@@ -11,11 +11,10 @@ import logging
 import os
 import threading
 
-import numpy as np
-from PIL import Image, ImageOps
-
+# numpy و Pillow و TensorFlow بيتستوردوا جوه الدوال (مش هنا): البوت لازم يشتغل حتى لو مش متسطّبين،
+# والميزة دي بس هي اللي تتقفل.
 log = logging.getLogger("feedbot.breed")
-Image.MAX_IMAGE_PIXELS = 60_000_000      # حماية من الصور الضخمة جداً
+MAX_IMAGE_PIXELS = 60_000_000            # حماية من الصور الضخمة جداً
 IMG_SIZE = (224, 224)
 TOP_K = 3
 STRONG, MEDIUM = 0.70, 0.45
@@ -59,6 +58,7 @@ class BreedClassifier:
             return False
         try:
             os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+            import numpy as np
             import tensorflow as tf                     # استيراد متأخر عشان البوت يبدأ بسرعة من غيره
             model = tf.keras.models.load_model(path, compile=False)
             with open(labels_path, encoding="utf-8") as fh:
@@ -77,6 +77,9 @@ class BreedClassifier:
 
     def predict(self, image_bytes: bytes):
         """يرجّع أعلى 3 سلالات [(label, probability)]."""
+        import numpy as np
+        from PIL import Image, ImageOps
+        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
         img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB").resize(IMG_SIZE)
         x = np.expand_dims(np.array(img, dtype=np.float32), 0)
         with self._lock:
