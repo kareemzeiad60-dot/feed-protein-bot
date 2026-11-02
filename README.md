@@ -53,6 +53,11 @@ Settings ← Secrets and variables ← **Actions** ← New repository secret: `B
 - تشغيل عادي: حط `cattle_model.h5` و`labels.json` في `models/` (أو `CATTLE_MODEL_DIR`) و`pip install -r requirements-cattle.txt`.
 - الموديل مفيهوش خانة «مش بقرة»، فأي صورة هيحاول يطابقها على السلالات التسعة. الرد بيوضّح كده.
 
+## الاختبارات
+`python test_core.py` (الحساب والإكسل) • `python test_bot_mock.py` • `CATTLE_MODEL_DIR=... python test_breed.py` •
+`python test_e2e.py` بيشغّل `bot.py` الحقيقي كعملية مستقلة ضد سيرفر محلي بيحاكي Telegram Bot API (متغير `TELEGRAM_API_URL`)
+ويغطي التشغيل والأزرار والإكسل والأدمن والبرودكاست والسلالة والإيقاف والنسخة الاحتياطية وإعادة التشغيل.
+
 ## ملفات المشروع
 `bot.py` (الأزرار والبوابة) • `admin.py` (الأدمن والبرودكاست) • `storage.py` (حفظ البيانات) •
 `breed.py` (التعرّف على السلالة) • `feed_core.py` (الحساب والإكسل) • `Feed_Calculator_Bilingual.xlsx` (القالب) • `test_*.py` (اختبارات)

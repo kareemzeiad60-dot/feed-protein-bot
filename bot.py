@@ -676,7 +676,11 @@ async def post_stop(app: Application):
 
 
 def build_app(token: str) -> Application:
-    app = Application.builder().token(token).post_init(post_init).post_stop(post_stop).build()
+    builder = Application.builder().token(token).post_init(post_init).post_stop(post_stop)
+    api = os.environ.get("TELEGRAM_API_URL")      # سيرفر Bot API محلي/مخصص (بنستخدمه في الاختبار الشامل)
+    if api:
+        builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")
+    app = builder.build()
     app.bot_data["store"] = Store(DATA_FILE, ADMIN_IDS)
     app.bot_data["admin_ids"] = ADMIN_IDS
     app.bot_data["feeds"] = FEEDS
