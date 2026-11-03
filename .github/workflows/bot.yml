@@ -1,25 +1,34 @@
 name: Run Telegram Bot
 
-# GitHub Actions مش استضافة دايمة: أي job بيقف بعد 6 ساعات كحد أقصى.
-# عشان كده البوت بيشتغل 5 ساعات و50 دقيقة وبعدها بيبدأ تشغيل جديد تلقائياً (كل 6 ساعات).
-# بيانات المستخدمين بتتحفظ كنسخة احتياطية مثبّتة في شات الأدمن مع البوت وبتتستعاد مع كل تشغيل.
+# GitHub Actions مش استضافة دايمة: أي job بيقف بعد 6 ساعات كحد أقصى، والـ cron بيتأخر ساعات أحياناً.
+# عشان كده: كل تشغيل (5 ساعات و45 دقيقة) بيشغّل اللي بعده بنفسه في آخر خطوة (handoff) بدل ما يستنى الـ cron،
+# والـ cron كل ساعة شبكة أمان لو السلسلة اتقطعت. الفجوة بين تشغيلين حوالي دقيقة أو اتنين (وقت التجهيز).
+# بيانات المستخدمين بتتحفظ كنسخة احتياطية مثبّتة في شات الأدمن وبتتستعاد مع كل تشغيل.
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "17 * * * *"     # شبكة أمان (التشغيلات الزيادة بتستنى في الطابور وبتتلغي لوحدها)
   push:
     branches: [main]
-    paths: ["**.py", "requirements.txt", "*.xlsx", ".github/workflows/bot.yml"]
-  workflow_dispatch:        # تشغيل يدوي من تبويب Actions
+    paths: ["**.py", "requirements*.txt", "*.xlsx", "models/*", ".github/workflows/bot.yml"]
+  workflow_dispatch:         # تشغيل يدوي من تبويب Actions
+    inputs:
+      handoff:
+        description: "تشغيل تلقائي من النسخة السابقة (بيستنى لحد ما اللي شغّال يخلّص). سيبه فاضي لو بتشغّل يدوي."
+        type: boolean
+        default: false
+      minutes:
+        description: "مدة تشغيل البوت بالدقايق (للاختبار بس)"
+        default: "345"
 
 # تشغيل واحد بس في نفس الوقت (لو اتنين بيعملوا polling تيليجرام بيرجّع خطأ 409).
-# أي push/تشغيل يدوي بيوقف النسخة القديمة ويشغّل الجديدة فوراً (عشان التعديلات تتطبّق).
-# التشغيل المجدول بيستنى لحد ما اللي شغال يخلّص من غير ما يقطعه.
+# push أو تشغيل يدوي بيوقف النسخة القديمة ويشغّل الجديدة فوراً. أما الـ handoff والـ cron فبيستنوا من غير ما يقطعوا حد.
 concurrency:
   group: feed-bot
-  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.handoff) }}
 
 permissions:
   contents: read
+  actions: write             # عشان الـ handoff يقدر يشغّل الـ workflow تاني
 
 jobs:
   run-bot:
@@ -61,10 +70,15 @@ jobs:
         continue-on-error: true
         run: pip install -r requirements-cattle.txt
 
+      # اختياري: بيخلّي أرقام الإكسل تظهر في معاينة الموبايل (RECALC)
       - name: Install LibreOffice
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends libreoffice-calc
+
+      - name: Mark start time
+        id: mark
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Run bot
         env:
@@ -72,4 +86,18 @@ jobs:
           ADMIN_IDS: ${{ secrets.ADMIN_IDS || vars.ADMIN_IDS }}
           CHANNEL_USERNAME: "@KIRA349A"
         # 124 = وقت التشغيل خلص طبيعي (مش خطأ)
-        run: timeout 350m python bot.py || [ $? -eq 124 ]
+        run: timeout ${{ inputs.minutes || 345 }}m python bot.py || [ $? -eq 124 ]
+
+      # آخر خطوة: شغّل النسخة اللي بعدها. بتشتغل حتى لو البوت وقع، إلا لو التشغيل اتلغى (push جديد جه بدالي).
+      - name: Hand off to the next run
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.mark.outputs.start }} ))
+          if [ "$elapsed" -lt 120 ]; then
+            echo "::warning::البوت وقف بعد أقل من دقيقتين، فمش هعيد التشغيل فوراً (عشان ما ندخلش في لفّة أعطال). الـ cron هيجرّب تاني خلال ساعة."
+            exit 0
+          fi
+          gh workflow run bot.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f handoff=true
+          echo "تم تشغيل النسخة الجاية (handoff)"
