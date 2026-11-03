@@ -38,6 +38,18 @@ export BOT_TOKEN="..." ADMIN_IDS="123456789"
 python bot.py
 ```
 
+## الاستضافة (الحل الحقيقي لتشغيل 24/7)
+GitHub Actions مش مصمّم لاستضافة بوت دايم: الـ job بيقف بعد 6 ساعات، والجدولة بتتأخر أحياناً ساعات، وشروط GitHub بتمنع استخدام Actions في أي نشاط مش متعلق ببناء واختبار ونشر المشروع نفسه (ومنها الـ serverless)، وممكن توقّف الـ jobs أو تقيّد الاستخدام. الـ workflow الموجود حل مؤقت (فجوة حوالي دقيقتين كل 6 ساعات).
+
+للتشغيل الثابت استخدم VPS أو استضافة بتدعم Docker:
+```bash
+cp .env.example .env        # عدّل BOT_TOKEN و ADMIN_IDS (و MODEL_KEY لو عايز السلالة)
+docker compose up -d --build
+```
+- ملفات `Dockerfile` و`docker-compose.yml` و`entrypoint.sh` لسه **مش مجرّبة على Docker فعلاً** (اتجرّب منطق فك التشفير بس). لو طلعت مشكلة في البناء ابعتها.
+- بيانات المستخدمين بتتحفظ في `/data` (volume) **وكمان** كنسخة احتياطية مثبّتة في شات الأدمن، فنقل البوت من Actions لسيرفر مش بيضيّع حاجة.
+- لما تشغّله على سيرفر، **وقّف الـ workflow** (Actions ← Run Telegram Bot ← ⋯ ← Disable workflow) عشان ما يشتغلش بوتين بنفس التوكن (خطأ 409).
+
 ## التشغيل على GitHub Actions
 الملف `.github/workflows/bot.yml` بيشغّل البوت (كل 6 ساعات، وعند أي push، ويدوي من تبويب Actions).
 Settings ← Secrets and variables ← **Actions** ← New repository secret: `BOT_TOKEN` و `ADMIN_IDS`.

@@ -1,0 +1,10 @@
+# تشغيل على VPS:  cp .env.example .env  (وعدّل القيم)  ثم:  docker compose up -d --build
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - feedbot-data:/data
+volumes:
+  feedbot-data:

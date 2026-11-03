@@ -1,0 +1,8 @@
+.git
+.github
+__pycache__
+*.pyc
+*.h5
+bot_data.json
+test_*.py
+.env
