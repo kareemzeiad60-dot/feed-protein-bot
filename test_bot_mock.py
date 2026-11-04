@@ -226,7 +226,7 @@ async def main():
         await bot.on_photo(u, c); return u, None
     bot.CLASSIFIER = Fake()
     u, _ = await photo(USER); out = u.wait.edit_text.call_args.args[0]
-    assert "جيرسي" in out and "62.0%" in out and "ثقة الموديل متوسطة" in out and store.users[USER]["breed_scans"] == 1
+    assert "جيرسي" in out and "62.0%" in out and "توقع تقريبي" in out and store.users[USER]["breed_scans"] == 1
     print("3n photo -> breed result:", out.splitlines()[2:5])
     u, _ = await photo(USER); assert "استنى" in u.message.reply_text.call_args.args[0] and Fake.calls == 1; print("3o cooldown blocks rapid second photo: OK")
     ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, doc=True); assert Fake.calls == 2; print("3p image sent as document works: OK")
