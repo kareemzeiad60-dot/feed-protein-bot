@@ -175,6 +175,8 @@ class Handler(BaseHTTPRequestHandler):
         if method == "copyMessage":
             if cid in F.blocked: raise PermissionError("Forbidden: bot was blocked by the user")
             return {"message_id": F.next_mid()}
+        if method == "sendPhoto":
+            return F.message(cid, photo=[{"file_id": "P1", "file_unique_id": "P1", "width": 1, "height": 1}], caption=p.get("caption", ""))
         return True        # answerCallbackQuery, setMyCommands, deleteMyCommands, setChatMenuButton, deleteWebhook ...
 
 
@@ -266,6 +268,11 @@ def main():
                 break
             assert "نتيجة التعرّف" in p["text"], p["text"]
             ok("صورة ← الموديل الحقيقي ← رد: " + " | ".join(p["text"].replace("\u200f", "").splitlines()[2:5]))
+            m = F.mark(); F.press(USER, "fb:n"); F.wait("editMessageText", m, 20, lambda p, f: "السلالة الصح" in p["text"])
+            m = F.mark(); F.press(USER, "fb:t3"); F.wait("editMessageText", m, 20, lambda p, f: "تحب تبعت" in p["text"])
+            m = F.mark(); time.sleep(0.3); assert not [c for c in F.calls[m:] if c[0] == "sendPhoto"]            # من غير موافقة: مفيش صورة بتتبعت
+            m = F.mark(); F.press(USER, "fb:s"); _, p, _ = F.wait("sendPhoto", m, 20, lambda p, f: p["chat_id"] == ADMIN)
+            assert "truth=Hereford" in p["caption"] and p["photo"].startswith("F"); ok("تقييم ❌ + اختيار السلالة الصح + موافقة: الصورة وصلت لشات الأدمن بالتصنيف")
             m = F.mark(); F.photo(USER, jpeg); time.sleep(1.0)
             assert any("استنى" in c[1].get("text", "") for c in F.calls[m:] if c[0] == "sendMessage"); ok("صورتين ورا بعض: التانية بتستنى (cooldown)")
             time.sleep(4.5); m = F.mark(); F.photo(USER, jpeg, doc=True)
@@ -276,6 +283,7 @@ def main():
         panel = F.mark(); F.press(ADMIN, "adm:panel"); _, p, _ = F.wait("editMessageText", panel, 20, lambda p, f: "لوحة الأدمن" in p["text"])
         total1 = int(re.search(r"إجمالي المستخدمين: (\d+)", p["text"]).group(1)); print("  لوحة الأدمن:", p["text"].replace("\u200f", "").splitlines()[2:6])
         assert "fb 1" in p["text"] and "imported" in p["text"]
+        if model_dir: assert "❌ 1" in p["text"] and "اتبعتت للتحسين: 1" in p["text"], p["text"]
 
         print("== إيقاف (SIGTERM) → نسخة احتياطية ==")
         m = F.mark(); rc = stop_bot(proc); assert rc == 0, rc

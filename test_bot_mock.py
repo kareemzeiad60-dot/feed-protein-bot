@@ -228,9 +228,27 @@ async def main():
     u, _ = await photo(USER); out = u.wait.edit_text.call_args.args[0]
     assert "جيرسي" in out and "62.0%" in out and "توقع تقريبي" in out and store.users[USER]["breed_scans"] == 1
     print("3n photo -> breed result:", out.splitlines()[2:5])
-    u, _ = await photo(USER); assert "استنى" in u.message.reply_text.call_args.args[0] and Fake.calls == 1; print("3o cooldown blocks rapid second photo: OK")
-    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, doc=True); assert Fake.calls == 2; print("3p image sent as document works: OK")
-    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, size=20_000_000); assert "كبيرة" in u.message.reply_text.call_args.args[0] and Fake.calls == 2
+    # ---- 3t) تقييم النتيجة + إرسال الصورة للتحسين بموافقة المستخدم
+    BOT.send_photo = AsyncMock()
+    u, _ = await press(USER, "fb:n"); assert "السلالة الصح" in last_text(u)
+    kb = u.callback_query.edit_message_text.call_args.kwargs["reply_markup"].inline_keyboard
+    assert len([b for row in kb for b in row]) == 3 + 1                         # 3 سلالات في الموديل المزيّف + «سلالة تانية»
+    u, _ = await press(USER, "fb:t0")                                           # الموديل قال Jersey والمستخدم قال Angus
+    assert store.users[USER].get("fb_bad", 0) == 1 and "تحب تبعت" in last_text(u)
+    u, _ = await press(USER, "fb:y"); assert store.users[USER].get("fb_ok", 0) == 0 and store.users[USER]["fb_bad"] == 1   # نفس الصورة ما تتحسبش مرتين
+    assert BOT.send_photo.call_count == 0                                       # من غير موافقة مفيش صورة بتتبعت
+    u, _ = await press(USER, "fb:s"); c = BOT.send_photo.call_args
+    assert c.args[0] == ADMIN and "truth=Angus" in c.kwargs["caption"] and "pred=Jersey" in c.kwargs["caption"] and "@" not in c.kwargs["caption"]
+    u, _ = await press(USER, "fb:s"); assert BOT.send_photo.call_count == 1 and store.users[USER]["fb_shared"] == 1
+    print("3t rating ❌ + pick true breed + consent -> photo to admin with labels only (no identity), once: OK")
+    ctx(USER).user_data["last_breed"] = 0; await photo(USER); u, _ = await press(USER, "fb:y"); assert store.users[USER]["fb_ok"] == 1
+    u, _ = await press(USER, "fb:x"); assert "شكراً" in last_text(u) and BOT.send_photo.call_count == 1
+    u, _ = await press(300, "fb:y"); assert "قديم" in u.callback_query.message.reply_text.call_args.args[0]; print("3u correct rating counted, decline sends nothing, stale rating button handled: OK")
+    u, _ = await press(ADMIN, "adm:panel"); assert "✅ 1 • ❌ 1" in last_text(u); print("3v admin panel:", [l for l in last_text(u).splitlines() if "تقييمات" in l or "اتبعتت" in l])
+    ctx(USER).user_data["last_breed"] = 0
+    u, _ = await photo(USER); u, _ = await photo(USER); assert "استنى" in u.message.reply_text.call_args.args[0] and Fake.calls == 3; print("3o cooldown blocks rapid second photo: OK")
+    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, doc=True); assert Fake.calls == 4; print("3p image sent as document works: OK")
+    ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, size=20_000_000); assert "كبيرة" in u.message.reply_text.call_args.args[0] and Fake.calls == 4
     ctx(USER).user_data["last_breed"] = 0; Fake.raise_exc = True; u, _ = await photo(USER); assert "مقدرتش" in u.wait.edit_text.call_args.args[0]; Fake.raise_exc = False
     print("3q oversize + decode failure handled: OK")
     bot.CLASSIFIER = MagicMock(available=False)
@@ -241,7 +259,7 @@ async def main():
     ctx(ADMIN).user_data["awaiting"] = {"type": "bc"}; calls_before = Fake.calls
     u = photo_update(ADMIN); BOT.copy_message = AsyncMock(); await bot.on_photo(u, ctx(ADMIN))
     assert Fake.calls == calls_before and ctx(ADMIN).user_data.get("bc_src"); print("3s admin photo during broadcast goes to broadcast: OK")
-    st = store.stats(); assert st["scans_total"] == 2; u, _ = await press(ADMIN, "adm:panel"); assert "عمليات تعرّف السلالة: 2" in last_text(u)
+    st = store.stats(); assert st["scans_total"] == 4, st["scans_total"]; u, _ = await press(ADMIN, "adm:panel"); assert "عمليات تعرّف السلالة: 4" in last_text(u)
     bot.CLASSIFIER = MagicMock(available=False)
 
     # ================= 4) الحفظ بعد إعادة التشغيل =================

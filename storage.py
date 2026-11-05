@@ -214,6 +214,9 @@ class Store:
             "banned": sum(1 for u in us if u.get("banned")),
             "calcs_total": sum(u.get("calcs", 0) for u in us),
             "scans_total": sum(u.get("breed_scans", 0) for u in us),
+            "fb_ok": sum(u.get("fb_ok", 0) for u in us),
+            "fb_bad": sum(u.get("fb_bad", 0) for u in us),
+            "fb_shared": sum(u.get("fb_shared", 0) for u in us),
             "calcs_today": self.daily.get(today(), {}).get("calcs", 0),
         }
 

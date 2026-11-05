@@ -190,7 +190,82 @@ def qty_view(u, row: int):
     return text, kb
 
 
-BREED_KB = Markup([[Btn("📸 صورة تانية", callback_data="br"), Btn("🔙 القائمة", callback_data="m")]])
+def breed_kb() -> Markup:
+    return Markup([[Btn("✅ النتيجة صح", callback_data="fb:y"), Btn("❌ غلط", callback_data="fb:n")],
+                   [Btn("📸 صورة تانية", callback_data="br"), Btn("🔙 القائمة", callback_data="m")]])
+
+
+AFTER_FB_KB = Markup([[Btn("📸 صورة تانية", callback_data="br"), Btn("🔙 القائمة", callback_data="m")]])
+
+
+def truth_view():
+    """المستخدم قال إن النتيجة غلط: يختار السلالة الصح."""
+    labels = CLASSIFIER.labels
+    rows, row = [], []
+    for i, lab in enumerate(labels):
+        row.append(Btn(breed.arabic_name(lab), callback_data=f"fb:t{i}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([Btn("🤷 سلالة تانية أو مش بقرة", callback_data=f"fb:t{len(labels)}")])
+    return rtl("❌ شكراً إنك نبّهتني. إيه السلالة الصح؟"), Markup(rows)
+
+
+def consent_view(scan):
+    """بعد التقييم: عرض إرسال الصورة للتحسين (بموافقة المستخدم)."""
+    can_share = bool(scan.get("share_ok")) and not scan.get("shared")
+    text = "🙏 شكراً على تقييمك، ده بيساعد في تحسين الموديل."
+    if can_share:
+        text += "\n\nتحب تبعت الصورة دي للمطوّر مع السلالة الصح عشان تتضاف لداتا التدريب؟ هتتبعت الصورة بس ومعاها السلالة، من غير اسمك."
+        return rtl(text), Markup([[Btn("📤 ابعت الصورة للتحسين", callback_data="fb:s")],
+                                  [Btn("لا شكراً", callback_data="fb:x")]])
+    if scan.get("shared"):
+        text += "\n📤 الصورة اتبعتت للتحسين."
+    return rtl(text), AFTER_FB_KB
+
+
+async def _feedback(q, context, u, rest: str):
+    scan = context.user_data.get("last_scan")
+    if not scan:
+        raise KeyError("no scan to rate")
+    store = S(context)
+    labels = CLASSIFIER.labels
+    scan["share_ok"] = bool(context.application.bot_data.get("admin_ids"))
+
+    def rate(truth):
+        if scan.get("rated"):
+            return
+        scan["rated"], scan["truth"] = True, truth
+        key = "fb_ok" if truth == scan["pred"] else "fb_bad"
+        u[key] = u.get(key, 0) + 1
+        store.mark()
+
+    if rest == "y":
+        rate(scan["pred"])
+        await _show(q, consent_view(scan))
+    elif rest == "n":
+        await _show(q, truth_view())
+    elif rest.startswith("t"):
+        idx = int(rest[1:])
+        rate(labels[idx] if idx < len(labels) else "other")
+        await _show(q, consent_view(scan))
+    elif rest == "s":
+        admins = context.application.bot_data.get("admin_ids")
+        if admins and not scan.get("shared") and scan.get("rated"):
+            caption = (f"#breed_feedback\npred={scan['pred']} p={scan['conf']:.2f}\ntruth={scan['truth']}")
+            send = context.bot.send_photo if scan["kind"] == "photo" else context.bot.send_document
+            await send(admins[0], scan["file_id"], caption=caption)
+            scan["shared"] = True
+            u["fb_shared"] = u.get("fb_shared", 0) + 1
+            store.mark()
+        await _show(q, consent_view(scan))
+    elif rest == "x":
+        await _show(q, (rtl("تمام 👍 شكراً على تقييمك."), AFTER_FB_KB))
+    else:
+        raise ValueError(rest)
+
+
 
 
 def breed_view():
@@ -437,6 +512,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _show(q, menu_view(u, adm, "تمام، بدأنا من جديد ✨"))
         elif kind == "br":
             await _show(q, breed_view())
+        elif kind == "fb":
+            await _feedback(q, context, u, rest)
         elif kind == "tg":
             if rest == "":
                 await _show(q, target_view(u))
@@ -602,7 +679,9 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     u["breed_scans"] = u.get("breed_scans", 0) + 1
     S(context).mark()
-    await wait.edit_text(rtl(breed.format_result(preds, len(CLASSIFIER.labels))), reply_markup=BREED_KB)
+    context.user_data["last_scan"] = {"file_id": file_obj.file_id, "kind": "photo" if msg.photo else "doc",
+                                      "pred": preds[0][0], "conf": preds[0][1], "rated": False, "shared": False}
+    await wait.edit_text(rtl(breed.format_result(preds, len(CLASSIFIER.labels))), reply_markup=breed_kb())
 
 
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
