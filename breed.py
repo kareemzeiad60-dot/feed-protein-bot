@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import os
+import re
 import threading
 
 # numpy و Pillow و TensorFlow بيتستوردوا جوه الدوال (مش هنا): البوت لازم يشتغل حتى لو مش متسطّبين،
@@ -19,8 +20,13 @@ IMG_SIZE = (224, 224)
 TOP_K = 3
 MEDIUM = 0.45     # تحت الرقم ده: "مش متأكد". مفيش مستوى "ثقة عالية" عمداً: نسبة الثقة مش مؤشر موثوق على صور الحظائر
 
+def norm_label(label: str) -> str:
+    """بيوحّد أسماء السلالات بين الموديلات (Holstein_Friesian = Holstein-Friesian، BRAFORD = Braford)."""
+    return re.sub(r"[\s_]+", "-", label.strip().lower())
+
+
 # الاسم بالإنجليزي زي ما هو في labels.json ← (الاسم بالعربي، النوع، وصف مختصر)
-BREEDS = {
+_BREEDS = {
     "Angus": ("أنجس", "لحم", "سلالة لحم شهيرة، لونها أسود غالباً وبدون قرون"),
     "Ayrshire": ("إيرشاير", "لبن", "سلالة لبن، لونها أحمر مع أبيض"),
     "Brown Swiss": ("براون سويس", "لبن", "سلالة لبن كبيرة الحجم، لونها بني إلى رمادي"),
@@ -30,16 +36,21 @@ BREEDS = {
     "Jersey": ("جيرسي", "لبن", "سلالة لبن صغيرة الحجم، لونها بني فاتح ولبنها غني بالدهن"),
     "Red Dane": ("ريد دين الدنماركي الأحمر", "لبن ولحم", "سلالة دنماركية حمراء تُربّى للبن واللحم"),
     "Simmental": ("سيمنتال", "لبن ولحم", "سلالة سويسرية مزدوجة الغرض، حمراء مع أبيض"),
+    "BRAFORD": ("برافورد", "لحم", "هجين بين البراهمان والهيرفورد، متحمّل للحرارة"),
+    "BRANGUES NEGRO": ("برانجوس الأسود", "لحم", "هجين بين البراهمان والأنجس، متحمّل للحرارة"),
 }
+BREEDS = {norm_label(k): v for k, v in _BREEDS.items()}
 
 
 def arabic_name(label: str) -> str:
-    return BREEDS.get(label, (label.replace("_", " "),))[0]
+    return BREEDS.get(norm_label(label), (label.replace("_", " "),))[0]
 
 
 class BreedClassifier:
-    def __init__(self, model_dir: str, model_file: str = "cattle_model.h5"):
+    def __init__(self, model_dir: str, model_file: str = "cattle_model.h5", preprocess: str = "raw", title: str = ""):
+        # preprocess: "raw" = قيم 0-255 (الموديل فيه preprocess جواه)، "unit" = x/255
         self.model_dir, self.model_file = model_dir, model_file
+        self.preprocess, self.title = preprocess, title or model_file
         self.model = None
         self.labels = []
         self.error = None
@@ -87,6 +98,8 @@ class BreedClassifier:
         Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
         img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB").resize(IMG_SIZE)
         x = np.expand_dims(np.array(img, dtype=np.float32), 0)
+        if self.preprocess == "unit":
+            x = x / 255.0
         with self._lock:
             probs = self.model.predict(x, verbose=0)[0]
         top = np.argsort(probs)[::-1][:TOP_K]
@@ -96,7 +109,7 @@ class BreedClassifier:
 def format_result(preds, n_breeds: int) -> str:
     """نص النتيجة (سطور قصيرة، من غير أقواس/أسهم عشان العرض العربي ما يتلخبطش)."""
     label, p = preds[0]
-    ar, kind, note = BREEDS.get(label, (label.replace("_", " "), "", ""))
+    ar, kind, note = BREEDS.get(norm_label(label), (label.replace("_", " "), "", ""))
     verdict = "🟡 توقع تقريبي، اتأكد بنفسك" if p >= MEDIUM else "🔴 ثقة الموديل ضعيفة، مش متأكد"
     lines = ["🐄 نتيجة التعرّف على السلالة", "", f"🥇 {ar}", f"   نسبة ثقة الموديل: {p * 100:.1f}%", f"   {verdict}"]
     if kind:

@@ -39,6 +39,7 @@ class Store:
         self.admin_ids = admin_ids
         self.users = {}        # uid -> dict (profile + qty + prices + recipes + target)
         self.daily = {}        # "YYYY-MM-DD" -> {"calcs": n}
+        self.settings = {}     # إعدادات عامة (مثلاً: موديل السلالة النشط)
         self.dirty = False
         self.restored = not admin_ids          # من غير أدمن مفيش نسخة تيليجرام نستعيدها
         self.backup_msg = None
@@ -59,6 +60,7 @@ class Store:
 
     def _load_obj(self, obj: dict):
         self.daily = obj.get("daily", {})
+        self.settings = obj.get("settings", {})
         self.users = {}
         for uid, u in obj.get("users", {}).items():
             u["qty"] = _int_keys(u.get("qty"))
@@ -67,7 +69,7 @@ class Store:
             self.users[int(uid)] = u
 
     def to_bytes(self) -> bytes:
-        obj = {"daily": self.daily, "users": {str(k): v for k, v in self.users.items()}}
+        obj = {"daily": self.daily, "settings": self.settings, "users": {str(k): v for k, v in self.users.items()}}
         return json.dumps(obj, ensure_ascii=False).encode("utf-8")
 
     def save_local(self):
@@ -100,8 +102,9 @@ class Store:
 
     def _merge(self, obj: dict):
         """لو عندنا بيانات في الذاكرة بالفعل، بنضيف عليها القديم من غير ما نمسح الجديد."""
-        mine_users, mine_daily = self.users, self.daily
+        mine_users, mine_daily, mine_settings = self.users, self.daily, self.settings
         self._load_obj(obj)
+        self.settings.update(mine_settings)
         for uid, u in mine_users.items():
             self.users[uid] = u
         for d, v in mine_daily.items():
@@ -217,8 +220,17 @@ class Store:
             "fb_ok": sum(u.get("fb_ok", 0) for u in us),
             "fb_bad": sum(u.get("fb_bad", 0) for u in us),
             "fb_shared": sum(u.get("fb_shared", 0) for u in us),
+            "fb_by_model": self._fb_by_model(us),
             "calcs_today": self.daily.get(today(), {}).get("calcs", 0),
         }
+
+    @staticmethod
+    def _fb_by_model(us) -> dict:
+        agg = {}
+        for u in us:
+            for name, c in (u.get("fb_models") or {}).items():
+                a = agg.setdefault(name, [0, 0]); a[0] += c.get("ok", 0); a[1] += c.get("bad", 0)
+        return agg
 
     def broadcast_targets(self) -> list:
         return [uid for uid, u in self.users.items() if not u.get("blocked") and not u.get("banned")]

@@ -45,9 +45,19 @@ SHARE_TEXT = "🐄 بوت بيحسب البروتين ونسب المكونات 
 # إعادة الحساب بـ LibreOffice (لو متسطّب) عشان القيم تظهر في معاينة الموبايل. اقفلها بـ RECALC=0
 RECALC = os.environ.get("RECALC", "1") != "0" and bool(shutil.which("soffice") or shutil.which("libreoffice"))
 FEEDS = fc.load_feeds(TEMPLATE)
-# موديل التعرّف على السلالة (اختياري: لو الملفات أو TensorFlow مش موجودين الميزة بتتقفل لوحدها)
-CLASSIFIER = breed.BreedClassifier(os.environ.get("CATTLE_MODEL_DIR", os.path.join(BASE, "models")),
-                                   os.environ.get("CATTLE_MODEL_FILE", "cattle_model.h5"))
+# موديلات التعرّف على السلالة (اختيارية: لو الملفات أو TensorFlow مش موجودين الميزة بتتقفل لوحدها).
+#   domestic: الموديل الجديد من DOMESTIC-CATTLE-AI (10 سلالات، x/255) — مرفوع في models/domestic
+#   insight : الموديل الأقدم من Cattle Insight Hub (9 سلالات، 0-255) — بيتفك تشفيره في models/ وقت التشغيل
+CLASSIFIERS = {
+    "domestic": breed.BreedClassifier(os.path.join(BASE, "models", "domestic"), "cattle_model.h5",
+                                      preprocess="unit", title="الجديد (10 سلالات)"),
+    "insight": breed.BreedClassifier(os.environ.get("CATTLE_MODEL_DIR", os.path.join(BASE, "models")),
+                                     os.environ.get("CATTLE_MODEL_FILE", "cattle_model.h5"),
+                                     preprocess="raw", title="القديم (9 سلالات)"),
+}
+DEFAULT_MODEL = os.environ.get("BREED_MODEL", "domestic")
+ACTIVE_NAME = DEFAULT_MODEL
+CLASSIFIER = CLASSIFIERS[ACTIVE_NAME]      # الموديل النشط حالياً (بيتغيّر بأمر /model للأدمن)
 BREED_COOLDOWN = 4                  # ثواني بين صورة وصورة لنفس المستخدم
 MAX_IMAGE_BYTES = 15_000_000
 _breed_sem = asyncio.Semaphore(1)   # تحليل صورة واحدة في المرة (الموديل بياخد CPU)
@@ -237,8 +247,11 @@ async def _feedback(q, context, u, rest: str):
         if scan.get("rated"):
             return
         scan["rated"], scan["truth"] = True, truth
-        key = "fb_ok" if truth == scan["pred"] else "fb_bad"
+        good = breed.norm_label(truth) == breed.norm_label(scan["pred"])
+        key = "fb_ok" if good else "fb_bad"
         u[key] = u.get(key, 0) + 1
+        per = u.setdefault("fb_models", {}).setdefault(scan.get("model", ACTIVE_NAME), {"ok": 0, "bad": 0})
+        per["ok" if good else "bad"] += 1
         store.mark()
 
     if rest == "y":
@@ -253,7 +266,7 @@ async def _feedback(q, context, u, rest: str):
     elif rest == "s":
         admins = context.application.bot_data.get("admin_ids")
         if admins and not scan.get("shared") and scan.get("rated"):
-            caption = (f"#breed_feedback\npred={scan['pred']} p={scan['conf']:.2f}\ntruth={scan['truth']}")
+            caption = (f"#breed_feedback\nmodel={scan.get('model', ACTIVE_NAME)}\npred={scan['pred']} p={scan['conf']:.2f}\ntruth={scan['truth']}")
             send = context.bot.send_photo if scan["kind"] == "photo" else context.bot.send_document
             await send(admins[0], scan["file_id"], caption=caption)
             scan["shared"] = True
@@ -680,7 +693,8 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u["breed_scans"] = u.get("breed_scans", 0) + 1
     S(context).mark()
     context.user_data["last_scan"] = {"file_id": file_obj.file_id, "kind": "photo" if msg.photo else "doc",
-                                      "pred": preds[0][0], "conf": preds[0][1], "rated": False, "shared": False}
+                                      "pred": preds[0][0], "conf": preds[0][1], "model": ACTIVE_NAME,
+                                      "rated": False, "shared": False}
     await wait.edit_text(rtl(breed.format_result(preds, len(CLASSIFIER.labels))), reply_markup=breed_kb())
 
 
@@ -719,13 +733,55 @@ async def post_init(app: Application):
     except TelegramError as e:
         log.warning("get_me failed: %s", e)
     app.bot_data["username"] = BOT_USERNAME
-    app.bot_data["breed_task"] = asyncio.create_task(_load_breed())      # في الخلفية عشان البوت يرد فوراً
+    app.bot_data["breed_task"] = asyncio.create_task(_load_breed(app))   # في الخلفية عشان البوت يرد فوراً
     await reset_menus(app)
 
 
-async def _load_breed():
-    ok = await asyncio.to_thread(CLASSIFIER.load)
-    log.info("breed recognition: %s", "ON" if ok else f"OFF ({CLASSIFIER.error})")
+def set_active(app, wanted: str) -> str:
+    """بيختار الموديل النشط: المطلوب لو شغّال، وإلا أي موديل تاني شغّال. بيرجّع الاسم الفعلي (أو None)."""
+    global CLASSIFIER, ACTIVE_NAME
+    order = [wanted] + [n for n in CLASSIFIERS if n != wanted]
+    name = next((n for n in order if n in CLASSIFIERS and CLASSIFIERS[n].available), None)
+    ACTIVE_NAME = name or wanted if wanted in CLASSIFIERS else DEFAULT_MODEL
+    CLASSIFIER = CLASSIFIERS[ACTIVE_NAME]
+    app.bot_data["breed_active_title"] = f"{ACTIVE_NAME} {CLASSIFIER.title}" if name else "مفيش موديل شغّال"
+    return name
+
+
+async def _load_breed(app):
+    store = app.bot_data["store"]
+    for name, clf in CLASSIFIERS.items():
+        ok = await asyncio.to_thread(clf.load)
+        log.info("breed model %s: %s", name, "ON" if ok else f"OFF ({clf.error})")
+        set_active(app, store.settings.get("breed_model") or DEFAULT_MODEL)     # فعّل المحفوظ (أو أقرب شغّال) أول ما يتحمّل أي موديل
+    log.info("breed recognition active model: %s", ACTIVE_NAME if CLASSIFIER.available else "none")
+
+
+async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """للأدمن: /model بيعرض الموديلات، و /model <اسم> بيبدّل."""
+    if not is_admin(context, update.effective_user.id):
+        return
+    store = S(context)
+    if context.args:
+        wanted = context.args[0].lower()
+        if wanted not in CLASSIFIERS:
+            await update.message.reply_text("الاسم مش معروف. المتاح: " + " / ".join(CLASSIFIERS))
+            return
+        if not CLASSIFIERS[wanted].available:
+            await update.message.reply_text(f"الموديل «{wanted}» مش شغّال دلوقتي ({CLASSIFIERS[wanted].error or 'لسه بيتحمّل'}).")
+            return
+        store.settings["breed_model"] = wanted
+        store.mark()
+        set_active(context.application, wanted)
+    stats = store.stats()["fb_by_model"]
+    lines = ["🧠 موديلات التعرّف على السلالة:"]
+    for name, c in CLASSIFIERS.items():
+        ok, bad = stats.get(name, [0, 0])
+        acc = f" • دقة {100 * ok / (ok + bad):.0f}%" if ok + bad >= 5 else ""
+        lines.append(f"{'▶️' if name == ACTIVE_NAME else '▫️'} {name}: {c.title} — {'شغّال' if c.available else 'مش شغّال'} • تقييمات ✅ {ok} ❌ {bad}{acc}")
+    lines += ["", "للتبديل: /model domestic أو /model insight"]
+    await update.message.reply_text(rtl("\n".join(lines)))
+
 
 
 async def reset_menus(app: Application):
@@ -733,7 +789,7 @@ async def reset_menus(app: Application):
     bot, admins = app.bot, app.bot_data["admin_ids"]
     base = [BotCommand("start", "القائمة الرئيسية"), BotCommand("calc", "احسب وابعت الملف"),
             BotCommand("new", "خلطة جديدة"), BotCommand("help", "مساعدة")]
-    extra = [BotCommand("admin", "لوحة الأدمن"), BotCommand("broadcast", "رسالة جماعية"), BotCommand("import", "استيراد مستخدمين"), BotCommand("links", "لينكات التتبع")]
+    extra = [BotCommand("admin", "لوحة الأدمن"), BotCommand("broadcast", "رسالة جماعية"), BotCommand("import", "استيراد مستخدمين"), BotCommand("links", "لينكات التتبع"), BotCommand("model", "موديل السلالة")]
     try:
         for scope in [BotCommandScopeDefault(), BotCommandScopeAllPrivateChats()] + [BotCommandScopeChat(a) for a in admins]:
             for lang in (None, "ar", "en"):
@@ -773,6 +829,7 @@ def build_app(token: str) -> Application:
     app.add_handler(CommandHandler("new", new))
     app.add_handler(CommandHandler("feeds", feeds_cmd))
     app.add_handler(CommandHandler("calc", calc))
+    app.add_handler(CommandHandler("model", model_cmd))
     for h in admin.handlers():
         app.add_handler(h)
     app.add_handler(CallbackQueryHandler(on_button))

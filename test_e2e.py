@@ -269,10 +269,16 @@ def main():
             assert "نتيجة التعرّف" in p["text"], p["text"]
             ok("صورة ← الموديل الحقيقي ← رد: " + " | ".join(p["text"].replace("\u200f", "").splitlines()[2:5]))
             m = F.mark(); F.press(USER, "fb:n"); F.wait("editMessageText", m, 20, lambda p, f: "السلالة الصح" in p["text"])
-            m = F.mark(); F.press(USER, "fb:t3"); F.wait("editMessageText", m, 20, lambda p, f: "تحب تبعت" in p["text"])
+            m = F.mark(); F.press(USER, "fb:t5"); F.wait("editMessageText", m, 20, lambda p, f: "تحب تبعت" in p["text"])
             m = F.mark(); time.sleep(0.3); assert not [c for c in F.calls[m:] if c[0] == "sendPhoto"]            # من غير موافقة: مفيش صورة بتتبعت
             m = F.mark(); F.press(USER, "fb:s"); _, p, _ = F.wait("sendPhoto", m, 20, lambda p, f: p["chat_id"] == ADMIN)
             assert "truth=Hereford" in p["caption"] and p["photo"].startswith("F"); ok("تقييم ❌ + اختيار السلالة الصح + موافقة: الصورة وصلت لشات الأدمن بالتصنيف")
+            m = F.mark(); F.say(ADMIN, "/model"); _, p, _ = F.wait("sendMessage", m, 20, lambda p, f: p["chat_id"] == ADMIN and "موديلات التعرّف" in p["text"])
+            t = p["text"]; assert "▶️ domestic" in t and "insight" in t and t.count("شغّال") >= 2 and "مش شغّال" not in t, t
+            ok("/model: الموديلين (الجديد 10 سلالات والقديم 9) اتحمّلوا واشتغلوا")
+            m = F.mark(); F.say(ADMIN, "/model insight"); F.wait("sendMessage", m, 20, lambda p, f: p["chat_id"] == ADMIN and "▶️ insight" in p["text"])
+            time.sleep(4.5); m = F.mark(); F.photo(USER, jpeg)
+            _, p, _ = F.wait("editMessageText", m, 40, lambda p, f: "نتيجة التعرّف" in p["text"]); ok("تبديل لموديل «insight» وصورة اتحلّلت بيه")
             m = F.mark(); F.photo(USER, jpeg); time.sleep(1.0)
             assert any("استنى" in c[1].get("text", "") for c in F.calls[m:] if c[0] == "sendMessage"); ok("صورتين ورا بعض: التانية بتستنى (cooldown)")
             time.sleep(4.5); m = F.mark(); F.photo(USER, jpeg, doc=True)
@@ -296,6 +302,13 @@ def main():
         F.wait("getFile", m, 60); ok("البوت جاب النسخة الاحتياطية من الرسالة المثبّتة عند التشغيل")
         time.sleep(1); m = F.mark(); F.press(ADMIN, "adm:panel"); _, p, _ = F.wait("editMessageText", m, 30, lambda p, f: "لوحة الأدمن" in p["text"])
         total2 = int(re.search(r"إجمالي المستخدمين: (\d+)", p["text"]).group(1)); assert total2 == total1, (total1, total2)
+        if model_dir:
+            deadline = time.time() + 150                         # الموديلين بيتحمّلوا في الخلفية بعد التشغيل
+            while True:
+                m = F.mark(); F.say(ADMIN, "/model"); _, p, _ = F.wait("sendMessage", m, 60, lambda p, f: p["chat_id"] == ADMIN and "موديلات التعرّف" in p["text"])
+                if "▶️ insight" in p["text"] or time.time() > deadline: break
+                time.sleep(6)
+            assert "▶️ insight" in p["text"], p["text"]; ok("الموديل النشط (insight) فضل زي ما هو بعد إعادة التشغيل (محفوظ في النسخة الاحتياطية)")
         m = F.mark(); F.press(USER, "m"); F.wait("editMessageText", m, 20); txt = F.msgs[F.last[USER]]["text"]
         assert "600.00 كجم" in txt; ok(f"بعد إعادة التشغيل: {total2} مستخدم رجعوا، وخلطة المستخدم (600 كجم ذرة) لسه موجودة")
         m = F.mark(); rc = stop_bot(proc); assert rc == 0; time.sleep(0.5)

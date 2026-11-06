@@ -70,7 +70,8 @@ async def flow():
     wait = MagicMock(); wait.edit_text = AsyncMock(); u.message.reply_text = AsyncMock(return_value=wait)
     await bot.on_photo(u, ctx)
     out = wait.edit_text.call_args.args[0]; assert "نتيجة التعرّف" in out and store.users[7]["breed_scans"] == 1
-    kb = wait.edit_text.call_args.kwargs["reply_markup"].inline_keyboard[0]; assert [b.callback_data for b in kb] == ["br", "m"]
+    rows = wait.edit_text.call_args.kwargs["reply_markup"].inline_keyboard
+    assert [b.callback_data for b in rows[0]] == ["fb:y", "fb:n"] and [b.callback_data for b in rows[1]] == ["br", "m"]
     print("6) handler -> reply with buttons: OK")
 asyncio.run(flow())
 print("ALL BREED TESTS OK")

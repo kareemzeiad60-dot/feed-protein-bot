@@ -1,0 +1,7 @@
+{
+  "source": "kareemzeiad60-dot/DOMESTIC-CATTLE-AI @ 0df86b7 (bot/cattle_model.h5, bot/labels.json)",
+  "md5": "fe2ba6a66a2b980b4fe605ade488a9e0",
+  "architecture": "MobileNetV2 + GAP + Dense(10, softmax)",
+  "preprocess": "x/255 (زي core.py في المصدر)",
+  "note": "الموديل ده مرفوع public في الريبو المصدر، فمفيش داعي لتشفيره."
+}

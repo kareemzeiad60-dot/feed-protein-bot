@@ -9,7 +9,7 @@ on:
     - cron: "17 * * * *"     # شبكة أمان (التشغيلات الزيادة بتستنى في الطابور وبتتلغي لوحدها)
   push:
     branches: [main]
-    paths: ["**.py", "requirements*.txt", "*.xlsx", "models/*", ".github/workflows/bot.yml"]
+    paths: ["**.py", "requirements*.txt", "*.xlsx", "models/**", ".github/workflows/bot.yml"]
   workflow_dispatch:         # تشغيل يدوي من تبويب Actions
     inputs:
       handoff:
@@ -65,8 +65,8 @@ jobs:
         if: env.HAS_MODEL_KEY == 'true' && steps.model.outcome == 'failure'
         run: echo "::warning::مقدرتش أفك تشفير موديل السلالة — راجع secret MODEL_KEY. البوت شغال من غير الميزة دي."
 
-      - name: Install TensorFlow (cattle breed model)
-        if: steps.model.outcome == 'success'
+      # الموديل الجديد (models/domestic) موجود في الريبو دايماً، فـ TensorFlow بيتسطّب دايماً (اختياري: لو فشل البوت يكمّل من غير السلالة)
+      - name: Install TensorFlow (cattle breed models)
         continue-on-error: true
         run: pip install -r requirements-cattle.txt
 

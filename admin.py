@@ -41,7 +41,10 @@ def panel_view(context):
         f"🚫 عاملين بلوك للبوت: {s['blocked']}   |   ⛔ محظورين: {s['banned']}\n\n"
         f"🧮 عمليات الحساب: {s['calcs_total']} (النهاردة {s['calcs_today']})\n"
         f"🐄 عمليات تعرّف السلالة: {s['scans_total']}\n"
-        f"⭐ تقييمات المستخدمين: ✅ {s['fb_ok']} • ❌ {s['fb_bad']}"
+        f"🧠 موديل السلالة النشط: {context.application.bot_data.get('breed_active_title', '—')}\n"
+        + "".join(f"   • {name}: ✅ {ok} • ❌ {bad}" + (f" • دقة {100 * ok / (ok + bad):.0f}%" if ok + bad >= 5 else "") + "\n"
+                  for name, (ok, bad) in sorted(s["fb_by_model"].items()))
+        + f"⭐ تقييمات المستخدمين: ✅ {s['fb_ok']} • ❌ {s['fb_bad']}"
         + (f" • دقة تقريبية {100 * s['fb_ok'] / (s['fb_ok'] + s['fb_bad']):.0f}%" if s['fb_ok'] + s['fb_bad'] >= 5 else "") + "\n"
         f"📤 صور اتبعتت للتحسين: {s['fb_shared']}\n"
         f"📈 المصادر: " + (" • ".join(f"{k} {v}" for k, v in s["sources"]) or "—") + "\n"

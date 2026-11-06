@@ -9,5 +9,6 @@ bot_data.json.tmp
 x.json
 # الموديل بيترفع مشفّر بس (models/*.enc). الملف الأصلي *.h5 مش بيترفع أبداً.
 *.h5
+!models/domestic/cattle_model.h5
 _model_src/
 .env

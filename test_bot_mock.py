@@ -245,6 +245,31 @@ async def main():
     u, _ = await press(USER, "fb:x"); assert "شكراً" in last_text(u) and BOT.send_photo.call_count == 1
     u, _ = await press(300, "fb:y"); assert "قديم" in u.callback_query.message.reply_text.call_args.args[0]; print("3u correct rating counted, decline sends nothing, stale rating button handled: OK")
     u, _ = await press(ADMIN, "adm:panel"); assert "✅ 1 • ❌ 1" in last_text(u); print("3v admin panel:", [l for l in last_text(u).splitlines() if "تقييمات" in l or "اتبعتت" in l])
+    # ---- 3w) أمر /model: عرض، تبديل، رفض اسم غلط/موديل واقف، fallback، إحصائيات لكل موديل
+    saved = (bot.CLASSIFIERS, bot.CLASSIFIER, bot.ACTIVE_NAME)
+    class FM:
+        def __init__(s, av, title): s.available, s.title, s.error, s.labels = av, title, (None if av else "boom"), ["Angus", "Jersey", "Simmental"]
+        def predict(s, data): return [("Jersey", 0.6), ("Angus", 0.3), ("Simmental", 0.1)]
+    bot.CLASSIFIERS = {"domestic": FM(True, "D"), "insight": FM(True, "I")}
+    appm = MagicMock(); appm.bot_data = bd
+    async def model_cmd(uid, *args):
+        c = ctx(uid); c.args = list(args); u = upd_msg(uid); await bot.model_cmd(u, c); return u
+    assert bot.set_active(appm, "domestic") == "domestic"
+    u = await model_cmd(ADMIN); t = u.message.reply_text.call_args.args[0]; assert "▶️ domestic" in t and "▫️ insight" in t
+    u = await model_cmd(ADMIN, "insight"); assert store.settings["breed_model"] == "insight" and bot.CLASSIFIER is bot.CLASSIFIERS["insight"] and "▶️ insight" in u.message.reply_text.call_args.args[0]
+    assert "insight" in bd["breed_active_title"]
+    u = await model_cmd(ADMIN, "nope"); assert "مش معروف" in u.message.reply_text.call_args.args[0]
+    bot.CLASSIFIERS["domestic"].available = False; bot.CLASSIFIERS["domestic"].error = "weights missing"
+    u = await model_cmd(ADMIN, "domestic"); assert "مش شغّال" in u.message.reply_text.call_args.args[0] and bot.ACTIVE_NAME == "insight"
+    u = await model_cmd(USER, "domestic"); assert not u.message.reply_text.called                      # مستخدم عادي: تجاهل
+    bot.CLASSIFIERS["insight"].available = False; assert bot.set_active(appm, "insight") is None and "مفيش" in bd["breed_active_title"]
+    bot.CLASSIFIERS["insight"].available = True; bot.CLASSIFIERS["domestic"].available = True
+    bot.CLASSIFIERS["domestic"].available = False; assert bot.set_active(appm, "domestic") == "insight"; bot.CLASSIFIERS["domestic"].available = True   # fallback للشغّال
+    bot.set_active(appm, "insight"); ctx(USER).user_data["last_breed"] = 0; await photo(USER); await press(USER, "fb:y")
+    assert store.users[USER]["fb_models"]["insight"] == {"ok": 1, "bad": 0} and store.users[USER]["fb_models"]["domestic"] == {"ok": 1, "bad": 1}
+    u, _ = await press(ADMIN, "adm:panel"); assert "insight: ✅ 1 • ❌ 0" in last_text(u) and "موديل السلالة النشط: insight" in last_text(u)
+    print("3w /model: show/switch/reject unknown/reject dead model/non-admin ignored/fallback + per-model feedback stats: OK")
+    bot.CLASSIFIERS, bot.CLASSIFIER, bot.ACTIVE_NAME = saved
     ctx(USER).user_data["last_breed"] = 0
     u, _ = await photo(USER); u, _ = await photo(USER); assert "استنى" in u.message.reply_text.call_args.args[0] and Fake.calls == 3; print("3o cooldown blocks rapid second photo: OK")
     ctx(USER).user_data["last_breed"] = 0; u, _ = await photo(USER, doc=True); assert Fake.calls == 4; print("3p image sent as document works: OK")
@@ -259,7 +284,7 @@ async def main():
     ctx(ADMIN).user_data["awaiting"] = {"type": "bc"}; calls_before = Fake.calls
     u = photo_update(ADMIN); BOT.copy_message = AsyncMock(); await bot.on_photo(u, ctx(ADMIN))
     assert Fake.calls == calls_before and ctx(ADMIN).user_data.get("bc_src"); print("3s admin photo during broadcast goes to broadcast: OK")
-    st = store.stats(); assert st["scans_total"] == 4, st["scans_total"]; u, _ = await press(ADMIN, "adm:panel"); assert "عمليات تعرّف السلالة: 4" in last_text(u)
+    st = store.stats(); assert st["scans_total"] == 5, st["scans_total"]; u, _ = await press(ADMIN, "adm:panel"); assert "عمليات تعرّف السلالة: 5" in last_text(u)
     bot.CLASSIFIER = MagicMock(available=False)
 
     # ================= 4) الحفظ بعد إعادة التشغيل =================

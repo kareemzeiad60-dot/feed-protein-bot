@@ -3,6 +3,7 @@
 __pycache__
 *.pyc
 *.h5
+!models/domestic/cattle_model.h5
 bot_data.json
 test_*.py
 .env
