@@ -1,6 +1,8 @@
 (() => {
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData || window.__MINIAPP_DEMO_INIT_DATA__ || "";
+  const pagesDemo = window.__MINIAPP_PAGES_DEMO__ === true;
+  const demoStorageKey = "feed-miniapp-pages-demo-v1";
   const $ = (id) => document.getElementById(id);
   const fmt = (value, digits = 2) => Number(value || 0).toLocaleString("ar-EG", {
     minimumFractionDigits: 0,
@@ -11,6 +13,7 @@
 
   tg?.ready();
   tg?.expand();
+  if (pagesDemo) $("export").textContent = "تنزيل CSV";
 
   function showNotice(message, error = false) {
     const notice = $("notice");
@@ -22,7 +25,9 @@
   }
 
   async function api(path, options = {}) {
-    const response = await fetch(path, {
+    if (pagesDemo) return pagesDemoApi(path, options);
+    const relativePath = path.replace(/^\/+/, "");
+    const response = await fetch(new URL(relativePath, document.baseURI), {
       ...options,
       headers: {
         Authorization: `tma ${initData}`,
@@ -36,6 +41,183 @@
       throw new Error(message);
     }
     return response;
+  }
+
+  function makeDemoState(feeds, saved = {}) {
+      const qty = Object.fromEntries(feeds.map((feed) => [
+        String(feed.row),
+        Number(saved.qty?.[feed.row] ?? feed.default_qty),
+      ]));
+      const prices = Object.fromEntries(feeds.map((feed) => [
+        String(feed.row),
+        Number(saved.prices?.[feed.row] || 0),
+      ]));
+      const target = saved.target == null ? null : Number(saved.target);
+      const recipes = Array.isArray(saved.recipes) ? saved.recipes : [];
+      const lines = feeds.filter((feed) => qty[String(feed.row)] > 0);
+      const totalWeight = lines.reduce((sum, feed) => sum + qty[String(feed.row)], 0);
+      const proteinKg = lines.reduce((sum, feed) => sum + qty[String(feed.row)] * feed.protein_pct / 100, 0);
+      const costLines = lines.filter((feed) => prices[String(feed.row)] > 0);
+      const costPerTon = costLines.length
+        ? costLines.reduce((sum, feed) => sum + prices[String(feed.row)] * qty[String(feed.row)] / totalWeight, 0)
+        : null;
+      let advice = "";
+      if (target && totalWeight > 0) {
+        const current = proteinKg / totalWeight * 100;
+        const diff = current - target;
+        if (Math.abs(diff) < 0.25) {
+          advice = `🎯 الهدف: ${fmt(target)}%\n✅ الحالي: ${fmt(current)}% وعلى الهدف`;
+        } else {
+          const source = diff < 0
+            ? feeds.find((feed) => feed.row === 7) || [...feeds].sort((a, b) => b.protein_pct - a.protein_pct)[0]
+            : feeds.find((feed) => feed.row === 5) || [...feeds].filter((feed) => feed.protein_pct > 0).sort((a, b) => a.protein_pct - b.protein_pct)[0];
+          if (source && (diff < 0 ? source.protein_pct > target : source.protein_pct < target)) {
+            const x = diff < 0
+              ? (target / 100 * totalWeight - proteinKg) / (source.protein_pct / 100 - target / 100)
+              : (proteinKg - target / 100 * totalWeight) / (target / 100 - source.protein_pct / 100);
+            advice = `🎯 الهدف: ${fmt(target)}%\n💡 ضيف حوالي ${fmt(x, 1)} كجم ${source.name} للوصول للهدف`;
+          }
+        }
+      }
+      return {
+        feeds,
+        qty,
+        prices,
+        target,
+        recipes,
+        result: {
+          total_weight: totalWeight,
+          protein_kg: proteinKg,
+          cp_pct: totalWeight > 0 ? proteinKg / totalWeight * 100 : 0,
+          cost_per_ton: costPerTon,
+          missing_price: lines.filter((feed) => !prices[String(feed.row)]).map((feed) => feed.name),
+          lines: lines.map((feed) => ({
+            row: feed.row,
+            name: feed.name,
+            qty: qty[String(feed.row)],
+            share: qty[String(feed.row)] / totalWeight * 100,
+            protein: qty[String(feed.row)] * feed.protein_pct / 100,
+            price: prices[String(feed.row)],
+          })),
+          advice,
+        },
+      };
+    }
+
+  function saveDemoState(nextState) {
+      localStorage.setItem(demoStorageKey, JSON.stringify({
+        qty: nextState.qty,
+        prices: nextState.prices,
+        target: nextState.target,
+        recipes: nextState.recipes,
+      }));
+      return nextState;
+    }
+
+  async function pagesDemoApi(path, options = {}) {
+      const method = options.method || "GET";
+      const payload = options.body ? JSON.parse(options.body) : {};
+      let status = 200;
+      let body;
+      if (path === "/api/state" && method === "GET") {
+        body = state;
+      } else if (path === "/api/state" && method === "PUT") {
+        let qty = { ...state.qty };
+        if (payload.reset) qty = Object.fromEntries(state.feeds.map((feed) => [String(feed.row), feed.default_qty]));
+        Object.assign(qty, payload.qty || {});
+        if (payload.scale_to) {
+          const total = Object.values(qty).reduce((sum, value) => sum + Number(value), 0);
+          if (total <= 0) {
+            status = 400;
+            body = { error: "أدخل وزنًا حاليًا أكبر من صفر." };
+          } else {
+            const factor = Number(payload.scale_to) / total;
+            qty = Object.fromEntries(Object.entries(qty).map(([row, value]) => [row, Math.round(value * factor * 100) / 100]));
+          }
+        }
+        if (status === 200) {
+          state = makeDemoState(state.feeds, {
+            qty,
+            prices: { ...state.prices, ...(payload.prices || {}) },
+            target: Object.hasOwn(payload, "target") ? payload.target : state.target,
+            recipes: state.recipes,
+          });
+          body = saveDemoState(state);
+        }
+      } else if (path === "/api/calculate" && method === "POST") {
+        body = state.result.total_weight > 0 ? state : { error: "أضف خامة واحدة على الأقل قبل الحساب." };
+        if (state.result.total_weight <= 0) status = 400;
+      } else if (path === "/api/recipes" && method === "POST") {
+        const recipes = [...state.recipes];
+        if (!payload.name || payload.name.length > 40) {
+          status = 400;
+          body = { error: "اكتب اسماً من 1 إلى 40 حرفاً." };
+        } else if (payload.action === "save") {
+          if (!recipes.includes(payload.name) && recipes.length >= 20) {
+            status = 400;
+            body = { error: "الحد الأقصى 20 خلطة محفوظة." };
+          } else if (!state.result.lines.length) {
+            status = 400;
+            body = { error: "أضف خامة واحدة على الأقل قبل حفظ الخلطة." };
+          } else {
+            recipes.push(...(recipes.includes(payload.name) ? [] : [payload.name]));
+            state = makeDemoState(state.feeds, {
+              qty: state.qty,
+              prices: state.prices,
+              target: state.target,
+              recipes,
+            });
+          }
+        } else if (payload.action === "load" && recipes.includes(payload.name)) {
+          const saved = JSON.parse(localStorage.getItem(`${demoStorageKey}:recipe:${payload.name}`) || "{}");
+          state = makeDemoState(state.feeds, { ...saved, recipes });
+        } else if (payload.action === "delete" && recipes.includes(payload.name)) {
+          localStorage.removeItem(`${demoStorageKey}:recipe:${payload.name}`);
+          state = makeDemoState(state.feeds, {
+            qty: state.qty,
+            prices: state.prices,
+            target: state.target,
+            recipes: recipes.filter((name) => name !== payload.name),
+          });
+        } else {
+          status = 404;
+          body = { error: "الخلطة غير موجودة." };
+        }
+        if (status === 200) {
+          if (payload.action === "save") {
+            localStorage.setItem(`${demoStorageKey}:recipe:${payload.name}`, JSON.stringify({
+              qty: state.qty,
+              prices: state.prices,
+              target: state.target,
+            }));
+          }
+          body = saveDemoState(state);
+        }
+      } else if (path === "/api/export" && method === "POST") {
+        if (!state.result.lines.length) {
+          status = 400;
+          body = { error: "أضف خامة واحدة على الأقل قبل تنزيل الملف." };
+        } else {
+          const rows = [
+            ["الخامة", "الكمية كجم", "النسبة %", "البروتين كجم", "سعر الطن جنيه"],
+            ...state.result.lines.map((line) => [line.name, line.qty, line.share, line.protein, line.price]),
+            ["الوزن الكلي", state.result.total_weight, "", state.result.protein_kg, ""],
+            ["نسبة البروتين %", state.result.cp_pct, "", "", ""],
+            ["تكلفة الطن جنيه", state.result.cost_per_ton ?? "", "", "", ""],
+          ];
+          return new Response(new Blob(
+            [`\uFEFF${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\r\n")}`],
+            { type: "text/csv;charset=utf-8" },
+          ));
+        }
+      } else {
+        status = 404;
+        body = { error: "الطلب غير موجود." };
+      }
+      if (status >= 400) {
+        return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
   }
 
   function renderResult() {
@@ -254,7 +436,7 @@
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = url;
-      link.download = "Feed_Calculation.xlsx";
+      link.download = pagesDemo ? "Feed_Calculation.csv" : "Feed_Calculation.xlsx";
       document.body.append(link);
       link.click();
       link.remove();
@@ -267,14 +449,22 @@
     }
   });
 
-  if (!initData) {
+  if (!initData && !pagesDemo) {
     showNotice("افتح التطبيق من زر «افتح التطبيق» داخل البوت.", true);
     return;
   }
-  api("/api/state")
-    .then(async (response) => {
-      state = await response.json();
+  const initialState = pagesDemo
+    ? fetch("./assets/demo-feeds.json").then((response) => response.json()).then((feeds) => {
+      const saved = JSON.parse(localStorage.getItem(demoStorageKey) || "{}");
+      state = makeDemoState(feeds, saved);
+      return state;
+    })
+    : api("/api/state").then((response) => response.json());
+  initialState
+    .then((loadedState) => {
+      state = loadedState;
       render();
+      if (pagesDemo) showNotice("نسخة Pages تجريبية: البيانات تُحفظ في هذا المتصفح فقط.");
     })
     .catch((error) => showNotice(error.message, true));
 })();

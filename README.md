@@ -67,6 +67,9 @@ python run_miniapp_demo.py
 ```
 افتح `http://127.0.0.1:8080`. المعاينة محلية فقط، لا تتصل بتيليجرام، وبياناتها مؤقتة وتُحذف عند إيقاف العملية (`Ctrl+C`). لتجربة التطبيق داخل تيليجرام استخدم إعداد النشر العام أعلاه.
 
+### GitHub Pages
+الـ workflow `.github/workflows/pages.yml` ينشر معاينة ثابتة من الواجهة تلقائياً على GitHub Pages. هذه النسخة تحسب الخلطة وتحفظ الأسعار والخلطات في `localStorage` على نفس المتصفح، وتصدّر CSV؛ لا تتطلب بوتاً أو خادماً. لا تستخدمها لحسابات سرية أو للوصول إلى بيانات البوت، ولتشغيل Mini App كاملة داخل تيليجرام اربط الواجهة بخادم API عام يدعم HTTPS.
+
 ## التشغيل على GitHub Actions
 الملف `.github/workflows/bot.yml` بيشغّل البوت (كل 6 ساعات، وعند أي push، ويدوي من تبويب Actions).
 Settings ← Secrets and variables ← **Actions** ← New repository secret: `BOT_TOKEN` و `ADMIN_IDS`.

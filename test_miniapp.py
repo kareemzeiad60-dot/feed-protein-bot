@@ -6,12 +6,14 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
 from urllib.parse import urlencode
 
 from aiohttp.test_utils import AioHTTPTestCase
 
 import feed_core as fc
 from miniapp import create_app, validate_init_data
+from prepare_pages import build
 from storage import Store
 
 
@@ -141,6 +143,16 @@ class MiniAppApiTests(AioHTTPTestCase):
             )
         finally:
             await client.close()
+
+    async def test_pages_build_is_static_and_includes_calculator_data(self):
+        output = Path(self.tmp.name) / "pages"
+        build(output)
+        html = (output / "index.html").read_text(encoding="utf-8")
+        feeds = json.loads((output / "assets" / "demo-feeds.json").read_text(encoding="utf-8"))
+        self.assertIn("window.__MINIAPP_PAGES_DEMO__ = true", html)
+        self.assertEqual(len(feeds), len(self.feeds))
+        self.assertEqual(feeds[0]["row"], self.feeds[0].row)
+        self.assertTrue((output / "assets" / "app.js").is_file())
 
     async def test_rejects_unauthenticated_and_invalid_mutations(self):
         response = await self.client.get("/api/state")
