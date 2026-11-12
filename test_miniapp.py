@@ -209,6 +209,7 @@ class MiniAppApiTests(AioHTTPTestCase):
         html = (output / "index.html").read_text(encoding="utf-8")
         feeds = json.loads((output / "demo-feeds.json").read_text(encoding="utf-8"))
         self.assertIn("window.__MINIAPP_PAGES_DEMO__ = true", html)
+        self.assertIn('./app.js?v=cdbc52b', html)
         self.assertEqual(len(feeds), len(self.feeds))
         self.assertEqual(feeds[0]["row"], self.feeds[0].row)
         self.assertTrue((output / "app.js").is_file())
