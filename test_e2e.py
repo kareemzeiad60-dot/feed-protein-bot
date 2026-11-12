@@ -190,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
 # ======================= السيناريو =======================
 def start_bot(port, data_file):
     env = dict(os.environ, BOT_TOKEN=TOKEN, ADMIN_IDS=str(ADMIN), TELEGRAM_API_URL=f"http://127.0.0.1:{port}",
-               DATA_FILE=data_file, TF_CPP_MIN_LOG_LEVEL="3", PYTHONUNBUFFERED="1")
+               DATA_FILE=data_file, TF_CPP_MIN_LOG_LEVEL="3", PYTHONUNBUFFERED="1", WEBAPP_PORT="0")
     log = tempfile.NamedTemporaryFile("w+", suffix=".log", delete=False)
     return subprocess.Popen([os.environ.get("BOT_PYTHON", sys.executable), os.path.join(HERE, "bot.py")], env=env, stdout=log, stderr=subprocess.STDOUT, cwd=HERE), log
 

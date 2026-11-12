@@ -4,6 +4,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    ports:
+      - "${WEBAPP_PORT:-8080}:${WEBAPP_PORT:-8080}"
     volumes:
       - feedbot-data:/data
 volumes:

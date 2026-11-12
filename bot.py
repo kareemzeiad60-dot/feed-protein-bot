@@ -14,10 +14,11 @@ import shutil
 import tempfile
 import time
 from urllib.parse import quote
+from urllib.parse import urlparse
 
 from telegram import (BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, BotCommandScopeDefault,
                       InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, MenuButtonCommands, MenuButtonDefault,
-                      ReplyKeyboardRemove, Update)
+                      ReplyKeyboardRemove, Update, WebAppInfo)
 from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler,
@@ -46,6 +47,10 @@ REQUIRE_SUB = os.environ.get("REQUIRE_SUBSCRIPTION", "1") != "0"
 COMMAND_MENU = os.environ.get("COMMAND_MENU", "1") != "0"
 WATERMARK = os.environ.get("WATERMARK", "1") != "0"        # رابط البوت تحت جدول الإكسل وفي الكابشن
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")          # بيتعرف تلقائياً من تيليجرام عند التشغيل
+WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip()
+if WEBAPP_URL and (urlparse(WEBAPP_URL).scheme != "https" or not urlparse(WEBAPP_URL).netloc):
+    log.error("WEBAPP_URL must be an HTTPS URL; Mini App launch button disabled")
+    WEBAPP_URL = ""
 SHARE_TEXT = "🐄 بوت بيحسب البروتين ونسب المكونات وتكلفة العليقة ويبعتلك ملف إكسل جاهز — جرّبه!"
 # إعادة الحساب بـ LibreOffice (لو متسطّب) عشان القيم تظهر في معاينة الموبايل. اقفلها بـ RECALC=0
 RECALC = os.environ.get("RECALC", "1") != "0" and bool(shutil.which("soffice") or shutil.which("libreoffice"))
@@ -160,6 +165,7 @@ def menu_view(u, admin_flag=False, title="🧮 الخلطة الحالية:"):
     res = fc.compute(u["qty"], FEEDS, u["prices"])
     text = summary_text(res, title, u.get("target")) if res["lines"] else "لسه مفيش خامات في الخلطة. دوس «إضافة» وابدأ 👇"
     rows = [
+        *([[Btn("🚀 افتح تطبيق حاسبة العليقة", web_app=WebAppInfo(url=WEBAPP_URL))]] if WEBAPP_URL else []),
         [Btn("➕ إضافة / تعديل خامة", callback_data="a:0")],
         [Btn("✅ احسب وابعتلي الملف", callback_data="calc")],
         [Btn("🐄 تعرّف على السلالة من صورة", callback_data="br")],
@@ -763,6 +769,8 @@ async def post_init(app: Application):
     app.bot_data["breed_task"] = asyncio.create_task(_load_breed(app))   # في الخلفية عشان البوت يرد فوراً
     await reset_menus(app)
     await set_branding(app)
+    from miniapp import start_server
+    await start_server(app, FEEDS, TEMPLATE, RECALC, REQUIRE_SUB, CHANNEL)
 
 
 def set_active(app, wanted: str) -> str:
@@ -850,6 +858,8 @@ async def set_branding(app: Application):
 
 
 async def post_stop(app: Application):
+    from miniapp import stop_server
+    await stop_server(app)
     task = app.bot_data.get("flush_task")
     if task:
         task.cancel()
