@@ -26,14 +26,14 @@ def upd_msg(uid, text=None):
     u = MagicMock(); u.effective_chat.id = uid; u.effective_user.id = uid; u.effective_user.full_name = f"user{uid}"; u.effective_user.username = f"u{uid}"
     u.effective_user.is_bot = False; u.callback_query = None
     m = u.message; m.text = text; m.chat_id = uid; m.message_id = 5
-    m.reply_text = AsyncMock(); m.reply_document = AsyncMock()
+    m.reply_text = AsyncMock(); m.reply_document = AsyncMock(); m.reply_photo = AsyncMock()
     return u
 
 def upd_btn(uid, data):
     u = MagicMock(); u.effective_user.id = uid; u.effective_user.full_name = f"user{uid}"; u.effective_user.username = f"u{uid}"
     u.effective_user.is_bot = False; u.message = None
     q = u.callback_query; q.data = data; q.answer = AsyncMock(); q.edit_message_text = AsyncMock()
-    q.message.reply_text = AsyncMock(); q.message.reply_document = AsyncMock()
+    q.message.reply_text = AsyncMock(); q.message.reply_document = AsyncMock(); q.message.reply_photo = AsyncMock()
     return u
 
 def member(status): return MagicMock(status=status)
@@ -97,6 +97,8 @@ async def main():
     print("2c save -> reset -> load recipe: OK")
     u, _ = await press(USER, "calc"); d = u.callback_query.message.reply_document.call_args
     cap = d.kwargs["caption"]; assert "تكلفة" in cap and store.users[USER]["calcs"] == 1; print("2d file sent:", d.kwargs["filename"], "|", cap.replace("\n", " | "))
+    ph = u.callback_query.message.reply_photo.call_args; assert ph.args[0][:8] == b"\x89PNG\r\n\x1a\n" and "نتيجة الخلطة" in ph.kwargs["caption"]
+    from htmlcheck import validate_html; assert not validate_html(ph.kwargs["caption"]), ph.kwargs["caption"]; print("2d' result card (PNG) sent before the Excel, caption is valid HTML")
     u, _ = await press(USER, "rd:خلطة التسمين"); assert not store.users[USER]["recipes"]
     u, _ = await press(USER, "rl:مش موجودة"); assert "قديم" in u.callback_query.message.reply_text.call_args.args[0]
     u, _ = await press(USER, "zzz:1"); assert "قديم" in u.callback_query.message.reply_text.call_args.args[0]

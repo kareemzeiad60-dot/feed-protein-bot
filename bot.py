@@ -6,6 +6,7 @@
         أسعار وتكلفة الطن • لوحة أدمن وبرودكاست • حفظ البيانات بعد إعادة التشغيل.
 """
 import asyncio
+import html
 import logging
 import os
 import re
@@ -17,14 +18,18 @@ from urllib.parse import quote
 from telegram import (BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, BotCommandScopeDefault,
                       InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, MenuButtonCommands, MenuButtonDefault,
                       ReplyKeyboardRemove, Update)
-from telegram.constants import ChatMemberStatus
+from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler,
-                          ContextTypes, MessageHandler, TypeHandler, filters)
+                          ContextTypes, Defaults, MessageHandler, TypeHandler, filters)
 
 import admin
 import breed
 import feed_core as fc
+try:
+    import card                      # بطاقة الصورة (Pillow + arabic-reshaper): اختيارية، لو ناقصة البوت يكمّل من غيرها
+except ImportError:                  # pragma: no cover
+    card = None
 from storage import MAX_RECIPES, Store
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
@@ -100,6 +105,11 @@ def is_admin(context, uid) -> bool:
     return uid in context.application.bot_data.get("admin_ids", [])
 
 
+def esc(text) -> str:
+    """هروب < > & عشان تيليجرام (parse_mode=HTML) ما يرفضش الرسالة لو فيها نص من المستخدم أو من خطأ."""
+    return html.escape(str(text), quote=False)
+
+
 def fmt(x: float) -> str:
     return f"{x:,.2f}"
 
@@ -111,28 +121,35 @@ def short(x: float) -> str:
 RLM = "\u200f"          # علامة اتجاه من اليمين: بتثبّت كل سطر RTL حتى لو بدأ برقم أو إيموجي
 
 
+_LEAD_TAGS = re.compile(r"^((?:</?[a-z-]+(?: [a-z-]+)*>)*)(.*)$")
+
+
 def rtl(text: str) -> str:
-    """كل سطر بيتثبّت من اليمين عشان الأرقام والنسب ما تلخبطش السطر."""
-    return "\n".join(RLM + line if line.strip() else line for line in text.split("\n"))
+    """كل سطر بيتثبّت من اليمين (RLM بعد وسوم HTML اللي في أوله) عشان الأرقام والنسب ما تلخبطش السطر."""
+    out = []
+    for line in text.split("\n"):
+        m = _LEAD_TAGS.match(line)
+        out.append(line if not line.strip() or not m.group(2) else m.group(1) + RLM + m.group(2))
+    return "\n".join(out)
 
 
 def summary_text(res: dict, title: str, target=None) -> str:
-    items = "\n".join(
-        f"• {f.name_ar}\n   {fmt(q)} كجم • {share * 100:.2f}% • بروتين {fmt(p)} كجم"
-        for f, q, p, share in res["lines"])
-    out = (f"{title}\n\n{items}\n\n"
-           f"━━━━━━━━━━\n"
-           f"⚖️ الوزن الكلي: {fmt(res['total_weight'])} كجم\n"
-           f"🥩 كمية البروتين: {fmt(res['protein_kg'])} كجم\n"
-           f"📊 نسبة البروتين الخام: {res['cp_pct']:.2f}%")
+    head = (f"<b>{esc(title)}</b>\n\n"
+            f"📊 <b>البروتين الخام: {res['cp_pct']:.2f}%</b>\n"
+            f"🥩 كمية البروتين: <b>{fmt(res['protein_kg'])}</b> كجم\n"
+            f"⚖️ الوزن الكلي: <b>{fmt(res['total_weight'])}</b> كجم")
+    if res["cost_per_ton"] is not None:
+        head += f"\n💵 تكلفة الطن: <b>{fmt(res['cost_per_ton'])}</b> جنيه"
+    items = "\n".join(f"• <b>{esc(f.name_ar)}</b>\n   {fmt(q)} كجم • {share * 100:.2f}% • بروتين {fmt(p)} كجم"
+                      for f, q, p, share in res["lines"])
+    tag = "<blockquote expandable>" if len(res["lines"]) > 4 else "<blockquote>"   # القايمة الطويلة بتتطوي وتتفتح بضغطة
+    out = f"{head}\n\n{tag}{items}</blockquote>"
     if target:
         _, adv = fc.advice(res, target, FEEDS)
         if adv:
-            out += "\n\n" + adv
-    if res["cost_per_ton"] is not None:
-        out += f"\n\n💵 تكلفة طن الخلطة: {fmt(res['cost_per_ton'])} جنيه"
-        if res["missing_price"]:
-            out += "\n⚠️ ناقص سعر: " + "، ".join(f.name_ar for f in res["missing_price"])
+            out += "\n\n" + esc(adv)
+    if res["cost_per_ton"] is not None and res["missing_price"]:
+        out += "\n⚠️ ناقص سعر: " + esc("، ".join(f.name_ar for f in res["missing_price"]))
     return rtl(out)
 
 
@@ -182,7 +199,7 @@ def qty_view(u, row: int):
     q = u["qty"].get(row, 0)
     price = u["prices"].get(row, 0)
     text = rtl(
-        f"🔹 {f.name_ar}\n\n"
+        f"🔹 <b>{esc(f.name_ar)}</b>\n\n"
         f"⚖️ الكمية: {fmt(q)} كجم\n"
         f"🥩 البروتين في الخامة: {f.cp_as_fed * 100:.2f}%\n"
         f"🥩 بروتين الكمية دي: {fmt(q * f.cp_as_fed)} كجم\n"
@@ -356,7 +373,7 @@ async def is_subscribed(context, uid: int, fresh: bool = False) -> bool:
             try:
                 await context.bot.send_message(
                     bd["admin_ids"][0],
-                    f"⚠️ مش قادر أتحقق من الاشتراك في {CHANNEL}.\nالسبب: {e}\n"
+                    f"⚠️ مش قادر أتحقق من الاشتراك في {esc(CHANNEL)}.\nالسبب: {esc(e)}\n"
                     "ضيف البوت كأدمن في القناة. لحد ما تصلّحها الاشتراك الإجباري متوقّف مؤقتاً.")
             except TelegramError:
                 pass
@@ -451,7 +468,7 @@ async def new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def feeds_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("الخامات المتاحة:\n" + "\n".join(f"• {f.name_ar}  |  {f.name_en}" for f in FEEDS))
+    await update.message.reply_text("الخامات المتاحة:\n" + "\n".join(f"• {esc(f.name_ar)}  |  {esc(f.name_en)}" for f in FEEDS))
 
 
 async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -478,6 +495,16 @@ async def _send_file(chat_message, update, context: ContextTypes.DEFAULT_TYPE):
         if BOT_USERNAME and WATERMARK:
             caption += f"\n\n🤖 @{BOT_USERNAME}"
         caption = rtl(caption)
+        png = None
+        if card is not None:
+            try:                                                  # بطاقة صورة جاهزة للمشاركة (لو فشلت الملف بيتبعت عادي)
+                state = fc.advice(res, u["target"], FEEDS)[0] if u.get("target") else None
+                png = await asyncio.to_thread(card.render_card, res, BOT_USERNAME if WATERMARK else "", u.get("target"), state)
+            except Exception:
+                log.exception("result card failed")
+        if png:
+            await chat_message.reply_photo(png, caption=rtl(f"🧮 <b>نتيجة الخلطة</b>\n📊 بروتين {res['cp_pct']:.2f}% • ⚖️ {fmt(res['total_weight'])} كجم"
+                                                              + (f"\n\n🤖 @{BOT_USERNAME}" if BOT_USERNAME and WATERMARK else "")))
         with open(path, "rb") as fh:
             await chat_message.reply_document(fh, filename="Feed_Calculation.xlsx", caption=caption)
     S(context).count_calc(uid)
@@ -651,7 +678,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         store.mark()
     t, kb = menu_view(u, adm, "تمام سجّلت 👍 الخلطة الحالية:" if updates else "🧮 الخلطة الحالية:")
     if errors:
-        t += "\n\n⚠️ الأسطر دي مافهمتهاش:\n" + "\n".join(errors)
+        t += "\n\n⚠️ الأسطر دي مافهمتهاش:\n" + esc("\n".join(errors))
     if not updates and not errors:
         t = "استخدم الأزرار 👇\n\n" + t
     await msg.reply_text(t, reply_markup=kb)
@@ -687,7 +714,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.exception("breed prediction failed")
         text = "مقدرتش أقرا الصورة دي 😕 ابعت صورة JPG أو PNG واضحة."
         if is_admin(context, uid):                       # الأدمن بيشوف السبب التقني (عشان لوج Actions مش دايماً متاح)
-            text += f"\n\n🛠 {type(e).__name__}: {str(e)[:300]}"
+            text += f"\n\n🛠 {esc(type(e).__name__)}: {esc(str(e)[:300])}"
         await wait.edit_text(text)
         return
     u["breed_scans"] = u.get("breed_scans", 0) + 1
@@ -735,6 +762,7 @@ async def post_init(app: Application):
     app.bot_data["username"] = BOT_USERNAME
     app.bot_data["breed_task"] = asyncio.create_task(_load_breed(app))   # في الخلفية عشان البوت يرد فوراً
     await reset_menus(app)
+    await set_branding(app)
 
 
 def set_active(app, wanted: str) -> str:
@@ -768,7 +796,7 @@ async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("الاسم مش معروف. المتاح: " + " / ".join(CLASSIFIERS))
             return
         if not CLASSIFIERS[wanted].available:
-            await update.message.reply_text(f"الموديل «{wanted}» مش شغّال دلوقتي ({CLASSIFIERS[wanted].error or 'لسه بيتحمّل'}).")
+            await update.message.reply_text(f"الموديل «{wanted}» مش شغّال دلوقتي ({esc(CLASSIFIERS[wanted].error or 'لسه بيتحمّل')}).")
             return
         store.settings["breed_model"] = wanted
         store.mark()
@@ -803,6 +831,24 @@ async def reset_menus(app: Application):
         log.warning("reset_menus failed: %s", e)
 
 
+BRAND_SHORT = "احسب بروتين العليقة ونسب المكونات وتكلفة الطن، واستلم ملف إكسل جاهز 🐄"
+BRAND_DESC = ("🐄 حاسبة العليقة\n\n"
+              "• احسب بروتين ونسب مكونات الخلطة في ثواني\n"
+              "• نصيحة للوصول للبروتين المطلوب\n"
+              "• بطاقة صورة وملف إكسل جاهزين للمشاركة\n"
+              "• تعرّف على سلالة الماشية من صورة\n\n"
+              "دوس Start وابدأ ✅")
+
+
+async def set_branding(app: Application):
+    """وصف البوت (بيظهر قبل Start) والوصف القصير (في صفحة البوت)."""
+    try:
+        await app.bot.set_my_short_description(BRAND_SHORT)
+        await app.bot.set_my_description(BRAND_DESC)
+    except TelegramError as e:
+        log.warning("set_branding failed: %s", e)
+
+
 async def post_stop(app: Application):
     task = app.bot_data.get("flush_task")
     if task:
@@ -814,7 +860,8 @@ async def post_stop(app: Application):
 
 
 def build_app(token: str) -> Application:
-    builder = Application.builder().token(token).post_init(post_init).post_stop(post_stop)
+    builder = (Application.builder().token(token).post_init(post_init).post_stop(post_stop)
+               .defaults(Defaults(parse_mode=ParseMode.HTML)))
     api = os.environ.get("TELEGRAM_API_URL")      # سيرفر Bot API محلي/مخصص (بنستخدمه في الاختبار الشامل)
     if api:
         builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")

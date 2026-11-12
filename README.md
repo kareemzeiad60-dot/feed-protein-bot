@@ -71,7 +71,7 @@ Settings ← Secrets and variables ← **Actions** ← New repository secret: `B
 - الموديل مفيهوش خانة «مش بقرة»، فأي صورة هيحاول يطابقها على السلالات التسعة. الرد بيوضّح كده.
 
 ## الاختبارات
-`python test_core.py` (الحساب والإكسل) • `python test_bot_mock.py` • `CATTLE_MODEL_DIR=... python test_breed.py` •
+`python test_core.py` (الحساب والإكسل) • `python test_html.py` (HTML سليم + البطاقة) • `python test_bot_mock.py` • `CATTLE_MODEL_DIR=... python test_breed.py` •
 `python test_e2e.py` بيشغّل `bot.py` الحقيقي كعملية مستقلة ضد سيرفر محلي بيحاكي Telegram Bot API (متغير `TELEGRAM_API_URL`)
 ويغطي التشغيل والأزرار والإكسل والأدمن والبرودكاست والسلالة والإيقاف والنسخة الاحتياطية وإعادة التشغيل.
 

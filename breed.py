@@ -5,6 +5,7 @@
 - لو الملفات أو TensorFlow مش موجودين، الميزة بتتقفل لوحدها والبوت يكمّل عادي.
 - التجهيز نفس server.py الأصلي: RGB ← 224×224 ← قيم خام 0-255 (الموديل فيه preprocess جواه).
 """
+import html
 import io
 import json
 import logging
@@ -44,6 +45,11 @@ BREEDS = {norm_label(k): v for k, v in _BREEDS.items()}
 
 def arabic_name(label: str) -> str:
     return BREEDS.get(norm_label(label), (label.replace("_", " "),))[0]
+
+
+def _e(text: str) -> str:
+    """هروب < > & (الرد بيتبعت بـ parse_mode=HTML، واسم سلالة مجهولة ممكن يكون فيه رموز)."""
+    return html.escape(text, quote=False)
 
 
 class BreedClassifier:
@@ -111,13 +117,13 @@ def format_result(preds, n_breeds: int) -> str:
     label, p = preds[0]
     ar, kind, note = BREEDS.get(norm_label(label), (label.replace("_", " "), "", ""))
     verdict = "🟡 توقع تقريبي، اتأكد بنفسك" if p >= MEDIUM else "🔴 ثقة الموديل ضعيفة، مش متأكد"
-    lines = ["🐄 نتيجة التعرّف على السلالة", "", f"🥇 {ar}", f"   نسبة ثقة الموديل: {p * 100:.1f}%", f"   {verdict}"]
+    lines = ["🐄 <b>نتيجة التعرّف على السلالة</b>", "", f"🥇 <b>{_e(ar)}</b>", f"   نسبة ثقة الموديل: {p * 100:.1f}%", f"   {verdict}"]
     if kind:
-        lines.append(f"   النوع: {kind}")
+        lines.append(f"   النوع: {_e(kind)}")
     if note:
-        lines.append(f"   {note}")
+        lines.append(f"   {_e(note)}")
     for medal, (lab, pr) in zip(("🥈", "🥉"), preds[1:3]):
-        lines.append(f"{medal} {arabic_name(lab)}: {pr * 100:.1f}%")
+        lines.append(f"{medal} {_e(arabic_name(lab))}: {pr * 100:.1f}%")
     if p < MEDIUM:
         lines += ["", "💡 جرّب صورة جانبية واضحة للحيوان كله وفي إضاءة كويسة."]
     lines += ["", f"⚠️ التعرّف من الصورة تقديري، والموديل متدرّب على {n_breeds} سلالات بس. "

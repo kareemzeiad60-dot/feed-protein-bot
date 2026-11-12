@@ -10,6 +10,7 @@ import io, json, os, re, signal, subprocess, sys, tempfile, threading, time, url
 from email.parser import BytesParser
 from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from htmlcheck import validate_html
 
 TOKEN = "111111:E2E-TEST"
 BOT = {"id": 111111, "is_bot": True, "first_name": "FeedBot", "username": "feedbot_e2e"}
@@ -22,7 +23,7 @@ class FakeTelegram:
     def __init__(self):
         self.cv = threading.Condition(); self.updates = []; self.uid = 1; self.mid = 1000
         self.calls = []; self.files = {}; self.msgs = {}; self.pinned = {}; self.last = {}
-        self.members = {NOSUB: "left"}; self.blocked = set()
+        self.members = {NOSUB: "left"}; self.blocked = set(); self.parse_errors = []
 
     # ---------- مساعدين ----------
     def next_mid(self):
@@ -136,6 +137,12 @@ class Handler(BaseHTTPRequestHandler):
         if not m: return self.reply({"ok": False, "description": "bad path"}, 404)
         method = m.group(1); params, files = parse_body(self, raw)
         if method != "getUpdates": FAKE.calls.append((method, params, files))
+        if params.get("parse_mode") == "HTML":                  # زي تيليجرام الحقيقي: HTML غلط = 400
+            text = params.get("text") if method in ("sendMessage", "editMessageText") else params.get("caption")
+            errs = validate_html(text) if text else []
+            if errs:
+                FAKE.parse_errors.append((method, errs, text[:120]))
+                return self.reply({"ok": False, "error_code": 400, "description": "Bad Request: can't parse entities: " + errs[0]}, 400)
         try:
             result = self.dispatch(method, params, files)
         except PermissionError as e:
@@ -226,6 +233,9 @@ def main():
         assert "600.00 كجم" in F.msgs[F.last[USER]]["text"]; ok("اختيار خامة وزيادة الكمية بالأزرار (600 كجم ذرة)")
         m = F.mark(); F.press(USER, "m"); F.wait("editMessageText", m, 20)
         m = F.mark(); F.press(USER, "calc"); _, p, files = F.wait("sendDocument", m, 90, lambda p, f: p["chat_id"] == USER)
+        _, ph, pfiles = F.wait("sendPhoto", m, 5, lambda p, f: p["chat_id"] == USER and "photo" in f)
+        png = pfiles["photo"][1]; assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 30_000 and "feedbot_e2e" in ph["caption"] and "نتيجة الخلطة" in ph["caption"]
+        from PIL import Image; im = Image.open(io.BytesIO(png)); assert im.size[0] == 1080; ok(f"بطاقة النتيجة (صورة {im.size[0]}×{im.size[1]}، {len(png)//1024} KB) وصلت قبل ملف الإكسل")
         name, data = files["document"]
         import openpyxl
         ws = openpyxl.load_workbook(io.BytesIO(data), data_only=True).worksheets[0]
@@ -236,6 +246,9 @@ def main():
         assert "@feedbot_e2e" in p["caption"]
         ok(f"/calc: وصل ملف إكسل ({len(data)//1024} KB): الخامات المختارة بس، مجموع النسب 100%، رابط البوت تحت الجدول")
 
+        d_ = [c for c in F.calls if c[0] == "setMyDescription"]; sd_ = [c for c in F.calls if c[0] == "setMyShortDescription"]
+        assert d_ and sd_ and len(d_[0][1]["description"]) <= 512 and len(sd_[0][1]["short_description"]) <= 120 and "حاسبة العليقة" in d_[0][1]["description"]
+        ok("وصف البوت والوصف القصير اتضبطوا عند التشغيل (ضمن حدود تيليجرام)")
         print("== الأدمن والبرودكاست ==")
         m = F.mark(); F.say(ADMIN, "/start"); F.wait("sendMessage", m, 20, lambda p, f: p["chat_id"] == ADMIN and "لوحة الأدمن" in json.dumps(p.get("reply_markup", {}), ensure_ascii=False))
         for uid in (5464602559, 5063876517): F.blocked.add(uid)
@@ -256,8 +269,9 @@ def main():
         import numpy as np
         buf = io.BytesIO(); Image.fromarray(np.random.default_rng(1).integers(0, 255, (480, 640, 3), dtype=np.uint8)).save(buf, "JPEG"); jpeg = buf.getvalue()
         model_dir = os.environ.get("CATTLE_MODEL_DIR")
+        both = bool(model_dir and os.path.exists(os.path.join(model_dir, "cattle_model.h5")))      # الموديل القديم متاح؟
         m = F.mark(); F.press(USER, "br"); F.wait("editMessageText", m, 20)
-        if model_dir and os.path.exists(os.path.join(model_dir, "cattle_model.h5")):
+        if True:                                                                 # الجديد (domestic) في الريبو، فالسلالة دايماً شغّالة
             deadline = time.time() + 120                                          # الموديل بيتحمّل في الخلفية
             while time.time() < deadline:
                 m = F.mark(); F.photo(USER, jpeg)
@@ -274,23 +288,27 @@ def main():
             m = F.mark(); F.press(USER, "fb:s"); _, p, _ = F.wait("sendPhoto", m, 20, lambda p, f: p["chat_id"] == ADMIN)
             assert "truth=Hereford" in p["caption"] and p["photo"].startswith("F"); ok("تقييم ❌ + اختيار السلالة الصح + موافقة: الصورة وصلت لشات الأدمن بالتصنيف")
             m = F.mark(); F.say(ADMIN, "/model"); _, p, _ = F.wait("sendMessage", m, 20, lambda p, f: p["chat_id"] == ADMIN and "موديلات التعرّف" in p["text"])
-            t = p["text"]; assert "▶️ domestic" in t and "insight" in t and t.count("شغّال") >= 2 and "مش شغّال" not in t, t
-            ok("/model: الموديلين (الجديد 10 سلالات والقديم 9) اتحمّلوا واشتغلوا")
-            m = F.mark(); F.say(ADMIN, "/model insight"); F.wait("sendMessage", m, 20, lambda p, f: p["chat_id"] == ADMIN and "▶️ insight" in p["text"])
-            time.sleep(4.5); m = F.mark(); F.photo(USER, jpeg)
-            _, p, _ = F.wait("editMessageText", m, 40, lambda p, f: "نتيجة التعرّف" in p["text"]); ok("تبديل لموديل «insight» وصورة اتحلّلت بيه")
+            t = p["text"]; assert "▶️ domestic" in t and "insight" in t, t
+            if both:
+                assert t.count("شغّال") >= 2 and "مش شغّال" not in t, t
+                ok("/model: الموديلين (الجديد 10 سلالات والقديم 9) اتحمّلوا واشتغلوا")
+                m = F.mark(); F.say(ADMIN, "/model insight"); F.wait("sendMessage", m, 20, lambda p, f: p["chat_id"] == ADMIN and "▶️ insight" in p["text"])
+                time.sleep(4.5); m = F.mark(); F.photo(USER, jpeg)
+                _, p, _ = F.wait("editMessageText", m, 40, lambda p, f: "نتيجة التعرّف" in p["text"]); ok("تبديل لموديل «insight» وصورة اتحلّلت بيه")
+            else:
+                assert "▶️ domestic: الجديد (10 سلالات) — شغّال" in t.replace("\u200f", ""), t
+                ok("/model: الموديل الجديد (10 سلالات) شغّال من الريبو لوحده، والقديم مش متاح (متوقع من غير CATTLE_MODEL_DIR)")
             m = F.mark(); F.photo(USER, jpeg); time.sleep(1.0)
             assert any("استنى" in c[1].get("text", "") for c in F.calls[m:] if c[0] == "sendMessage"); ok("صورتين ورا بعض: التانية بتستنى (cooldown)")
             time.sleep(4.5); m = F.mark(); F.photo(USER, jpeg, doc=True)
             F.wait("editMessageText", m, 30, lambda p, f: "نتيجة التعرّف" in p["text"]); ok("صورة مبعوتة كملف (document) اشتغلت برضه")
-        else:
-            m = F.mark(); F.photo(USER, jpeg); F.wait("sendMessage", m, 20, lambda p, f: "مش متاحة" in p["text"]); ok("من غير موديل: رسالة «مش متاحة» بدل ما يقع")
 
         panel = F.mark(); F.press(ADMIN, "adm:panel"); _, p, _ = F.wait("editMessageText", panel, 20, lambda p, f: "لوحة الأدمن" in p["text"])
         total1 = int(re.search(r"إجمالي المستخدمين: (\d+)", p["text"]).group(1)); print("  لوحة الأدمن:", p["text"].replace("\u200f", "").splitlines()[2:6])
         assert "fb 1" in p["text"] and "imported" in p["text"]
-        if model_dir: assert "❌ 1" in p["text"] and "اتبعتت للتحسين: 1" in p["text"], p["text"]
+        assert "❌ 1" in p["text"] and "اتبعتت للتحسين: 1" in p["text"], p["text"]
 
+        assert not F.parse_errors, F.parse_errors; ok("كل رسايل البوت HTML سليم (المحاكي بيرفض الغلط زي تيليجرام)")
         print("== إيقاف (SIGTERM) → نسخة احتياطية ==")
         m = F.mark(); rc = stop_bot(proc); assert rc == 0, rc
         _, p, files = F.wait("sendDocument", m, 5, lambda p, f: int(p["chat_id"]) == ADMIN and f["document"][0] == "bot_data.json")
@@ -302,7 +320,7 @@ def main():
         F.wait("getFile", m, 60); ok("البوت جاب النسخة الاحتياطية من الرسالة المثبّتة عند التشغيل")
         time.sleep(1); m = F.mark(); F.press(ADMIN, "adm:panel"); _, p, _ = F.wait("editMessageText", m, 30, lambda p, f: "لوحة الأدمن" in p["text"])
         total2 = int(re.search(r"إجمالي المستخدمين: (\d+)", p["text"]).group(1)); assert total2 == total1, (total1, total2)
-        if model_dir:
+        if both:
             deadline = time.time() + 150                         # الموديلين بيتحمّلوا في الخلفية بعد التشغيل
             while True:
                 m = F.mark(); F.say(ADMIN, "/model"); _, p, _ = F.wait("sendMessage", m, 60, lambda p, f: p["chat_id"] == ADMIN and "موديلات التعرّف" in p["text"])

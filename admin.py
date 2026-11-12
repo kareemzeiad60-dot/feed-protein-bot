@@ -4,6 +4,7 @@
 """
 import asyncio
 import csv
+import html
 import io
 import logging
 import re
@@ -277,7 +278,7 @@ async def _set_ban(update, context, banned: bool):
         return
     u["banned"] = banned
     _store(context).mark()
-    await update.message.reply_text(("⛔ تم حظر " if banned else "✅ تم فك الحظر عن ") + f"{u['name'] or target} ({target})")
+    await update.message.reply_text(("⛔ تم حظر " if banned else "✅ تم فك الحظر عن ") + f"{html.escape(str(u['name'] or target), quote=False)} ({target})")
 
 
 async def cmd_ban(update, context):
