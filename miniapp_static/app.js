@@ -1,7 +1,7 @@
 (() => {
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData || window.__MINIAPP_DEMO_INIT_DATA__ || "";
-  const pagesDemo = window.__MINIAPP_PAGES_DEMO__ === true;
+  const pagesDemo = window.__MINIAPP_PAGES_DEMO__ === true || location.hostname.endsWith(".github.io");
   const demoStorageKey = "feed-miniapp-pages-demo-v1";
   const $ = (id) => document.getElementById(id);
   const fmt = (value, digits = 2) => Number(value || 0).toLocaleString("ar-EG", {
@@ -477,7 +477,7 @@
     return;
   }
   const initialState = pagesDemo
-    ? fetch("./assets/demo-feeds.json").then((response) => response.json()).then((feeds) => {
+    ? fetch("./demo-feeds.json").then((response) => response.json()).then((feeds) => {
       const saved = JSON.parse(localStorage.getItem(demoStorageKey) || "{}");
       state = makeDemoState(feeds, saved);
       return state;

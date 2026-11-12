@@ -14,25 +14,19 @@ def build(output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     shutil.copytree(ROOT / "miniapp_static", output, dirs_exist_ok=True)
     feeds = fc.load_feeds(str(ROOT / "Feed_Calculator_Bilingual.xlsx"))
-    assets = output / "assets"
-    assets.mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "miniapp_static" / "app.js", assets / "app.js")
-    shutil.copy2(ROOT / "miniapp_static" / "style.css", assets / "style.css")
-    (output / "app.js").unlink()
-    (output / "style.css").unlink()
     payload = [{
         "row": feed.row,
         "name": feed.name_ar,
         "protein_pct": feed.cp_as_fed * 100,
         "default_qty": feed.default_qty,
     } for feed in feeds]
-    (assets / "demo-feeds.json").write_text(
+    (output / "demo-feeds.json").write_text(
         json.dumps(payload, ensure_ascii=False),
         encoding="utf-8",
     )
     index = output / "index.html"
     html = index.read_text(encoding="utf-8")
-    app_script = '  <script defer src="./assets/app.js"></script>'
+    app_script = '  <script defer src="./app.js"></script>'
     demo_flag = '  <script>window.__MINIAPP_PAGES_DEMO__ = true;</script>\n'
     if html.count(app_script) != 1:
         raise ValueError("Mini App script tag was missing or duplicated")

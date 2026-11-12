@@ -173,13 +173,14 @@ class MiniAppApiTests(AioHTTPTestCase):
         output = Path(self.tmp.name) / "pages"
         build(output)
         html = (output / "index.html").read_text(encoding="utf-8")
-        feeds = json.loads((output / "assets" / "demo-feeds.json").read_text(encoding="utf-8"))
+        feeds = json.loads((output / "demo-feeds.json").read_text(encoding="utf-8"))
         self.assertIn("window.__MINIAPP_PAGES_DEMO__ = true", html)
         self.assertEqual(len(feeds), len(self.feeds))
         self.assertEqual(feeds[0]["row"], self.feeds[0].row)
-        self.assertTrue((output / "assets" / "app.js").is_file())
+        self.assertTrue((output / "app.js").is_file())
         self.assertIn('id="send-to-bot"', html)
-        self.assertIn("tg.sendData(data)", (output / "assets" / "app.js").read_text(encoding="utf-8"))
+        self.assertIn("tg.sendData(data)", (output / "app.js").read_text(encoding="utf-8"))
+        self.assertTrue((output / "demo-feeds.json").is_file())
 
     async def test_rejects_unauthenticated_and_invalid_mutations(self):
         response = await self.client.get("/api/state")
