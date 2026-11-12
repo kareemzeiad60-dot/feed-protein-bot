@@ -14,6 +14,7 @@
   tg?.ready();
   tg?.expand();
   if (pagesDemo) $("export").textContent = "تنزيل CSV";
+  $("send-to-bot").hidden = typeof tg?.sendData !== "function";
 
   function showNotice(message, error = false) {
     const notice = $("notice");
@@ -392,6 +393,28 @@
       showNotice("تم حساب الخلطة.");
     } catch (error) {
       showNotice(error.message, true);
+    }
+  });
+  $("send-to-bot").addEventListener("click", async () => {
+    if (!await syncInputs()) return;
+    if (state.result.total_weight <= 0) {
+      showNotice("أضف خامة واحدة على الأقل قبل الإرسال.", true);
+      return;
+    }
+    const data = JSON.stringify({
+      type: "feed_calculation",
+      qty: state.qty,
+      prices: state.prices,
+      target: state.target,
+    });
+    if (new TextEncoder().encode(data).length > 4096) {
+      showNotice("بيانات الخلطة أكبر من الحد المسموح للإرسال.", true);
+      return;
+    }
+    try {
+      tg.sendData(data);
+    } catch (error) {
+      showNotice(error.message || "تعذّر إرسال الخلطة إلى البوت.", true);
     }
   });
   $("reset").addEventListener("click", async () => {

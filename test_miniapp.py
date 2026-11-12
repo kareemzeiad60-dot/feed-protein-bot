@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from aiohttp.test_utils import AioHTTPTestCase
 
 import feed_core as fc
-from miniapp import create_app, validate_init_data
+from miniapp import create_app, parse_webapp_calculation, validate_init_data
 from prepare_pages import build
 from storage import Store
 
@@ -60,6 +60,31 @@ class MiniAppApiTests(AioHTTPTestCase):
             validate_init_data(signed_init_data().replace("test-query", "tampered"), TOKEN)
         with self.assertRaisesRegex(ValueError, "expired"):
             validate_init_data(signed_init_data(auth_date=now - 86_401), TOKEN, now)
+
+    async def test_web_app_calculation_payload_validation(self):
+        quantities = {str(feed.row): 0 for feed in self.feeds}
+        prices = {str(feed.row): 0 for feed in self.feeds}
+        quantities[str(self.feeds[0].row)] = 125.5
+        prices[str(self.feeds[0].row)] = 15000
+        raw = json.dumps({
+            "type": "feed_calculation",
+            "qty": quantities,
+            "prices": prices,
+            "target": 18,
+        })
+        parsed_qty, parsed_prices, target = parse_webapp_calculation(raw, self.feeds)
+        self.assertEqual(parsed_qty[self.feeds[0].row], 125.5)
+        self.assertEqual(parsed_prices[self.feeds[0].row], 15000)
+        self.assertEqual(target, 18)
+        with self.assertRaisesRegex(ValueError, "ناقص"):
+            parse_webapp_calculation(json.dumps({
+                "type": "feed_calculation",
+                "qty": {str(self.feeds[0].row): 1},
+                "prices": prices,
+                "target": None,
+            }), self.feeds)
+        with self.assertRaisesRegex(ValueError, "أطول"):
+            parse_webapp_calculation(" " * 4097, self.feeds)
 
     async def test_state_recipes_and_excel_export(self):
         response = await self.client.get("/")
@@ -153,6 +178,8 @@ class MiniAppApiTests(AioHTTPTestCase):
         self.assertEqual(len(feeds), len(self.feeds))
         self.assertEqual(feeds[0]["row"], self.feeds[0].row)
         self.assertTrue((output / "assets" / "app.js").is_file())
+        self.assertIn('id="send-to-bot"', html)
+        self.assertIn("tg.sendData(data)", (output / "assets" / "app.js").read_text(encoding="utf-8"))
 
     async def test_rejects_unauthenticated_and_invalid_mutations(self):
         response = await self.client.get("/api/state")

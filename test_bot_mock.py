@@ -23,7 +23,7 @@ for n in ("send_message", "send_document", "copy_message", "pin_chat_message", "
     setattr(BOT, n, AsyncMock())
 
 def upd_msg(uid, text=None):
-    u = MagicMock(); u.effective_chat.id = uid; u.effective_user.id = uid; u.effective_user.full_name = f"user{uid}"; u.effective_user.username = f"u{uid}"
+    u = MagicMock(); u.effective_chat.id = uid; u.effective_chat.type = "private"; u.effective_user.id = uid; u.effective_user.full_name = f"user{uid}"; u.effective_user.username = f"u{uid}"
     u.effective_user.is_bot = False; u.callback_query = None
     m = u.message; m.text = text; m.chat_id = uid; m.message_id = 5
     m.reply_text = AsyncMock(); m.reply_document = AsyncMock(); m.reply_photo = AsyncMock()
@@ -99,6 +99,18 @@ async def main():
     cap = d.kwargs["caption"]; assert "تكلفة" in cap and store.users[USER]["calcs"] == 1; print("2d file sent:", d.kwargs["filename"], "|", cap.replace("\n", " | "))
     ph = u.callback_query.message.reply_photo.call_args; assert ph.args[0][:8] == b"\x89PNG\r\n\x1a\n" and "نتيجة الخلطة" in ph.kwargs["caption"]
     from htmlcheck import validate_html; assert not validate_html(ph.kwargs["caption"]), ph.kwargs["caption"]; print("2d' result card (PNG) sent before the Excel, caption is valid HTML")
+    import json
+    app_qty = {str(f.row): 0 for f in bot.FEEDS}; app_qty["5"] = 600
+    app_prices = {str(f.row): 0 for f in bot.FEEDS}; app_prices["5"] = 12000
+    payload = json.dumps({"type": "feed_calculation", "qty": app_qty, "prices": app_prices, "target": 18})
+    app_update = upd_msg(USER); app_update.message.web_app_data.data = payload
+    await bot.on_web_app_data(app_update, ctx(USER))
+    assert store.users[USER]["qty"][5] == 600 and store.users[USER]["prices"][5] == 12000
+    assert app_update.message.reply_document.called and store.users[USER]["calcs"] == 2
+    invalid_app = upd_msg(USER); invalid_app.message.web_app_data.data = "{}"
+    await bot.on_web_app_data(invalid_app, ctx(USER))
+    assert store.users[USER]["qty"][5] == 600 and "غير مكتملة" in invalid_app.message.reply_text.call_args.args[0]
+    print("2d'' Mini App data validated and Excel sent back to bot chat: OK")
     u, _ = await press(USER, "rd:خلطة التسمين"); assert not store.users[USER]["recipes"]
     u, _ = await press(USER, "rl:مش موجودة"); assert "قديم" in u.callback_query.message.reply_text.call_args.args[0]
     u, _ = await press(USER, "zzz:1"); assert "قديم" in u.callback_query.message.reply_text.call_args.args[0]
@@ -142,8 +154,10 @@ async def main():
     first = u.message.reply_text.call_args_list[0]
     assert isinstance(first.kwargs["reply_markup"], ReplyKeyboardRemove)             # كيبورد قديم يتشال
     assert u.message.reply_text.call_args_list[1].kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "a:0"   # القائمة الرئيسية بزراير جوه الرسالة
+    app_markup = u.message.reply_text.call_args_list[2].kwargs["reply_markup"]
+    assert app_markup.keyboard[0][0].web_app.url == bot.WEBAPP_URL
     assert BOT.set_chat_menu_button.call_args.kwargs["chat_id"] == USER and isinstance(BOT.set_chat_menu_button.call_args.kwargs["menu_button"], MenuButtonCommands)
-    print("3d /start removes stale reply keyboard + resets chat menu button: OK")
+    print("3d /start shows Mini App send-data keyboard + resets chat menu button: OK")
     for n in ("delete_my_commands", "set_my_commands", "set_chat_menu_button"): getattr(BOT, n).reset_mock()
     app = MagicMock(); app.bot = BOT; app.bot_data = bd
     await bot.reset_menus(app)

@@ -91,6 +91,27 @@ def _parse_rows(values, valid_rows, label: str, maximum: float) -> dict:
     return parsed
 
 
+def parse_webapp_calculation(data: str, feeds) -> tuple[dict, dict, float | None]:
+    if not isinstance(data, str) or len(data.encode("utf-8")) > 4096:
+        raise ValueError("بيانات الخلطة أطول من المسموح.")
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ValueError("بيانات الخلطة غير صالحة.") from exc
+    if not isinstance(payload, dict) or set(payload) != {"type", "qty", "prices", "target"}:
+        raise ValueError("بيانات الخلطة غير مكتملة.")
+    if payload["type"] != "feed_calculation":
+        raise ValueError("نوع الطلب غير صالح.")
+    valid_rows = {feed.row for feed in feeds}
+    quantities = _parse_rows(payload["qty"], valid_rows, "quantity", MAX_QTY)
+    prices = _parse_rows(payload["prices"], valid_rows, "price", MAX_PRICE)
+    if set(quantities) != valid_rows or set(prices) != valid_rows:
+        raise ValueError("بيانات بعض الخامات ناقصة.")
+    raw_target = payload["target"]
+    target = None if raw_target is None else _number(raw_target, "target", 100)
+    return quantities, prices, target
+
+
 async def _json_body(request):
     try:
         return await request.json()

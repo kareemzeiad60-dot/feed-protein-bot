@@ -17,8 +17,9 @@ from urllib.parse import quote
 from urllib.parse import urlparse
 
 from telegram import (BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeChat, BotCommandScopeDefault,
+                      KeyboardButton,
                       InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup, MenuButtonCommands, MenuButtonDefault,
-                      ReplyKeyboardRemove, Update, WebAppInfo)
+                      ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, WebAppInfo)
 from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler,
@@ -47,7 +48,10 @@ REQUIRE_SUB = os.environ.get("REQUIRE_SUBSCRIPTION", "1") != "0"
 COMMAND_MENU = os.environ.get("COMMAND_MENU", "1") != "0"
 WATERMARK = os.environ.get("WATERMARK", "1") != "0"        # رابط البوت تحت جدول الإكسل وفي الكابشن
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")          # بيتعرف تلقائياً من تيليجرام عند التشغيل
-WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip()
+WEBAPP_URL = os.environ.get(
+    "WEBAPP_URL",
+    "https://kareemzeiad60-dot.github.io/feed-protein-bot/",
+).strip()
 if WEBAPP_URL and (urlparse(WEBAPP_URL).scheme != "https" or not urlparse(WEBAPP_URL).netloc):
     log.error("WEBAPP_URL must be an HTTPS URL; Mini App launch button disabled")
     WEBAPP_URL = ""
@@ -165,7 +169,6 @@ def menu_view(u, admin_flag=False, title="🧮 الخلطة الحالية:"):
     res = fc.compute(u["qty"], FEEDS, u["prices"])
     text = summary_text(res, title, u.get("target")) if res["lines"] else "لسه مفيش خامات في الخلطة. دوس «إضافة» وابدأ 👇"
     rows = [
-        *([[Btn("🚀 افتح تطبيق حاسبة العليقة", web_app=WebAppInfo(url=WEBAPP_URL))]] if WEBAPP_URL else []),
         [Btn("➕ إضافة / تعديل خامة", callback_data="a:0")],
         [Btn("✅ احسب وابعتلي الملف", callback_data="calc")],
         [Btn("🐄 تعرّف على السلالة من صورة", callback_data="br")],
@@ -452,6 +455,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except TelegramError:
         pass
     await update.message.reply_text(text, reply_markup=kb)
+    if WEBAPP_URL and update.effective_chat.type == "private":
+        app_button = ReplyKeyboardMarkup(
+            [[KeyboardButton("🚀 افتح التطبيق وأرسل Excel", web_app=WebAppInfo(url=WEBAPP_URL))]],
+            resize_keyboard=True,
+        )
+        await update.message.reply_text(
+            "لإرسال ملف Excel إلى هذه المحادثة، افتح التطبيق من الزر أسفل الشاشة.",
+            reply_markup=app_button,
+        )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -479,6 +491,20 @@ async def feeds_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_file(update.message, update, context)
+
+
+async def on_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    try:
+        from miniapp import parse_webapp_calculation
+        quantities, prices, target = parse_webapp_calculation(msg.web_app_data.data, FEEDS)
+    except ValueError as exc:
+        await msg.reply_text(f"مش قادر أقرأ الخلطة من التطبيق: {esc(exc)}")
+        return
+    u, _ = me(update, context)
+    u["qty"], u["prices"], u["target"] = quantities, prices, target
+    S(context).mark()
+    await _send_file(msg, update, context)
 
 
 async def _send_file(chat_message, update, context: ContextTypes.DEFAULT_TYPE):
@@ -891,6 +917,7 @@ def build_app(token: str) -> Application:
         app.add_handler(h)
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, on_web_app_data))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
     return app
