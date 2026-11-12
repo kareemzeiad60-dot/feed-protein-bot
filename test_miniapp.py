@@ -121,6 +121,27 @@ class MiniAppApiTests(AioHTTPTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual((await response.json())["recipes"], [])
 
+    async def test_local_preview_bootstrap_is_opt_in(self):
+        app = create_app(
+            self.application,
+            self.feeds,
+            "Feed_Calculator_Bilingual.xlsx",
+            require_subscription=False,
+            demo_init_data="local-signed-demo-data",
+        )
+        from aiohttp.test_utils import TestClient, TestServer
+
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/")
+            self.assertIn(
+                "window.__MINIAPP_DEMO_INIT_DATA__=\"local-signed-demo-data\"",
+                await response.text(),
+            )
+        finally:
+            await client.close()
+
     async def test_rejects_unauthenticated_and_invalid_mutations(self):
         response = await self.client.get("/api/state")
         self.assertEqual(response.status, 401)

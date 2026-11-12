@@ -134,7 +134,8 @@ def _state(user, feeds) -> dict:
 
 
 def create_app(application, feeds, template_path: str, recalc: bool = False,
-               require_subscription: bool = True, channel: str = "@KIRA349A") -> web.Application:
+               require_subscription: bool = True, channel: str = "@KIRA349A",
+               demo_init_data: str | None = None) -> web.Application:
     defaults = fc.default_quantities(feeds)
     valid_rows = {feed.row for feed in feeds}
     app = web.Application(client_max_size=1_048_576)
@@ -309,6 +310,17 @@ def create_app(application, feeds, template_path: str, recalc: bool = False,
         )
 
     async def index(_request):
+        if demo_init_data is not None:
+            page = (STATIC / "index.html").read_text(encoding="utf-8")
+            bootstrap = (
+                "<script>window.__MINIAPP_DEMO_INIT_DATA__="
+                + json.dumps(demo_init_data)
+                + ";</script>"
+            )
+            return web.Response(
+                text=page.replace("</head>", bootstrap + "</head>", 1),
+                content_type="text/html",
+            )
         return web.FileResponse(STATIC / "index.html")
 
     async def health(_request):

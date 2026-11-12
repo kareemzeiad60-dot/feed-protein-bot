@@ -1,6 +1,6 @@
 (() => {
   const tg = window.Telegram?.WebApp;
-  const initData = tg?.initData || "";
+  const initData = tg?.initData || window.__MINIAPP_DEMO_INIT_DATA__ || "";
   const $ = (id) => document.getElementById(id);
   const fmt = (value, digits = 2) => Number(value || 0).toLocaleString("ar-EG", {
     minimumFractionDigits: 0,
