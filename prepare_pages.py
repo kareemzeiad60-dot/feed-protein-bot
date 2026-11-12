@@ -26,7 +26,7 @@ def build(output: Path) -> None:
     )
     index = output / "index.html"
     html = index.read_text(encoding="utf-8")
-    app_script = '  <script defer src="./app.js?v=cdbc52b"></script>'
+    app_script = '  <script defer src="./app.js?v=components-only"></script>'
     demo_flag = '  <script>window.__MINIAPP_PAGES_DEMO__ = true;</script>\n'
     if html.count(app_script) != 1:
         raise ValueError("Mini App script tag was missing or duplicated")

@@ -87,6 +87,17 @@ class MiniAppApiTests(AioHTTPTestCase):
         with self.assertRaisesRegex(ValueError, "أطول"):
             parse_webapp_calculation(" " * 4097, self.feeds)
 
+    async def test_existing_users_drop_only_implicit_default_additives(self):
+        user = self.store.touch(123, "Test", "tester", fc.default_quantities(self.feeds))
+        user["qty"][self.feeds[0].row] = 50
+        additive = next(feed for feed in self.feeds if feed.default_qty > 0)
+
+        response = await self.client.get("/api/state", headers=self.auth())
+        self.assertEqual(response.status, 200)
+        state = await response.json()
+        self.assertEqual(state["qty"][str(self.feeds[0].row)], 50)
+        self.assertEqual(state["qty"][str(additive.row)], 0)
+
     async def test_cost_requires_prices_for_all_used_feeds(self):
         quantities = {feed.row: 0 for feed in self.feeds}
         used = self.feeds[:2]
@@ -132,6 +143,8 @@ class MiniAppApiTests(AioHTTPTestCase):
         response = await self.client.get("/api/state", headers=self.auth())
         self.assertEqual(response.status, 200)
         state = await response.json()
+        self.assertEqual(state["result"]["total_weight"], 0)
+        self.assertTrue(all(value == 0 for value in state["qty"].values()))
         row = str(self.feeds[0].row)
         empty_qty = {str(feed.row): 0 for feed in self.feeds}
 
@@ -182,6 +195,14 @@ class MiniAppApiTests(AioHTTPTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual((await response.json())["recipes"], [])
 
+        response = await self.client.put(
+            "/api/state",
+            headers=self.auth(),
+            json={"reset": True},
+        )
+        reset_state = await response.json()
+        self.assertEqual(reset_state["result"]["total_weight"], 0)
+
     async def test_local_preview_bootstrap_is_opt_in(self):
         app = create_app(
             self.application,
@@ -209,7 +230,7 @@ class MiniAppApiTests(AioHTTPTestCase):
         html = (output / "index.html").read_text(encoding="utf-8")
         feeds = json.loads((output / "demo-feeds.json").read_text(encoding="utf-8"))
         self.assertIn("window.__MINIAPP_PAGES_DEMO__ = true", html)
-        self.assertIn('./app.js?v=cdbc52b', html)
+        self.assertIn('./app.js?v=components-only', html)
         self.assertEqual(len(feeds), len(self.feeds))
         self.assertEqual(feeds[0]["row"], self.feeds[0].row)
         self.assertTrue((output / "app.js").is_file())
@@ -226,7 +247,7 @@ class MiniAppApiTests(AioHTTPTestCase):
         self.assertEqual(response.status, 401)
 
         row = str(self.feeds[0].row)
-        baseline = sum(fc.default_quantities(self.feeds).values())
+        baseline = 0
         response = await self.client.put(
             "/api/state",
             headers=self.auth(),

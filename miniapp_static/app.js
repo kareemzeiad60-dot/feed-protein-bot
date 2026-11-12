@@ -2,7 +2,8 @@
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData || window.__MINIAPP_DEMO_INIT_DATA__ || "";
   const pagesDemo = window.__MINIAPP_PAGES_DEMO__ === true || location.hostname.endsWith(".github.io");
-  const demoStorageKey = "feed-miniapp-pages-demo-v1";
+  const demoStorageKey = "feed-miniapp-pages-demo-v2";
+  const previousDemoStorageKey = "feed-miniapp-pages-demo-v1";
   const $ = (id) => document.getElementById(id);
   const fmt = (value, digits = 2) => Number(value || 0).toLocaleString("ar-EG", {
     minimumFractionDigits: 0,
@@ -47,7 +48,7 @@
   function makeDemoState(feeds, saved = {}) {
       const qty = Object.fromEntries(feeds.map((feed) => [
         String(feed.row),
-        Number(saved.qty?.[feed.row] ?? feed.default_qty),
+        Number(saved.qty?.[feed.row] ?? 0),
       ]));
       const prices = Object.fromEntries(feeds.map((feed) => [
         String(feed.row),
@@ -105,6 +106,36 @@
       };
     }
 
+  function migrateDemoState(feeds) {
+    const saved = JSON.parse(localStorage.getItem(previousDemoStorageKey) || "{}");
+    const clearImplicitDefaults = (values) => {
+      const qty = { ...(values.qty || {}) };
+      for (const feed of feeds) {
+        if (feed.default_qty > 0 && Number(qty[feed.row] || 0) === feed.default_qty) {
+          qty[feed.row] = 0;
+        }
+      }
+      return { ...values, qty };
+    };
+    const migrated = clearImplicitDefaults(saved);
+    for (const name of migrated.recipes || []) {
+      const recipeKey = `${previousDemoStorageKey}:recipe:${name}`;
+      const recipe = localStorage.getItem(recipeKey);
+      if (recipe) {
+        localStorage.setItem(
+          `${demoStorageKey}:recipe:${name}`,
+          JSON.stringify(clearImplicitDefaults(JSON.parse(recipe))),
+        );
+        localStorage.removeItem(recipeKey);
+      }
+    }
+    if (localStorage.getItem(previousDemoStorageKey)) {
+      localStorage.setItem(demoStorageKey, JSON.stringify(migrated));
+      localStorage.removeItem(previousDemoStorageKey);
+    }
+    return migrated;
+  }
+
   function saveDemoState(nextState) {
       localStorage.setItem(demoStorageKey, JSON.stringify({
         qty: nextState.qty,
@@ -124,7 +155,7 @@
         body = state;
       } else if (path === "/api/state" && method === "PUT") {
         let qty = { ...state.qty };
-        if (payload.reset) qty = Object.fromEntries(state.feeds.map((feed) => [String(feed.row), feed.default_qty]));
+        if (payload.reset) qty = Object.fromEntries(state.feeds.map((feed) => [String(feed.row), 0]));
         Object.assign(qty, payload.qty || {});
         if (payload.scale_to) {
           const total = Object.values(qty).reduce((sum, value) => sum + Number(value), 0);
@@ -480,7 +511,7 @@
   }
   const initialState = pagesDemo
     ? fetch("./demo-feeds.json").then((response) => response.json()).then((feeds) => {
-      const saved = JSON.parse(localStorage.getItem(demoStorageKey) || "{}");
+      const saved = JSON.parse(localStorage.getItem(demoStorageKey) || "null") || migrateDemoState(feeds);
       state = makeDemoState(feeds, saved);
       return state;
     })

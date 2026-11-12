@@ -157,7 +157,8 @@ def _state(user, feeds) -> dict:
 def create_app(application, feeds, template_path: str, recalc: bool = False,
                require_subscription: bool = True, channel: str = "@KIRA349A",
                demo_init_data: str | None = None) -> web.Application:
-    defaults = fc.default_quantities(feeds)
+    defaults = {feed.row: 0.0 for feed in feeds}
+    previous_defaults = fc.default_quantities(feeds)
     valid_rows = {feed.row for feed in feeds}
     app = web.Application(client_max_size=1_048_576)
 
@@ -181,6 +182,12 @@ def create_app(application, feeds, template_path: str, recalc: bool = False,
             defaults,
             source="miniapp",
         )
+        if not user.get("miniapp_explicit_components"):
+            for row, default_qty in previous_defaults.items():
+                if default_qty > 0 and user["qty"].get(row, 0) == default_qty:
+                    user["qty"][row] = 0.0
+            user["miniapp_explicit_components"] = True
+            store.mark()
         if user.get("banned"):
             return web.json_response({"error": "الحساب غير مسموح له باستخدام التطبيق."}, status=403)
         sub_cache = application.bot_data.setdefault("sub_cache", {})
