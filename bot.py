@@ -157,7 +157,7 @@ def summary_text(res: dict, title: str, target=None) -> str:
         _, adv = fc.advice(res, target, FEEDS)
         if adv:
             out += "\n\n" + esc(adv)
-    if res["cost_per_ton"] is not None and res["missing_price"]:
+    if res["missing_price"]:
         out += "\n⚠️ ناقص سعر: " + esc("، ".join(f.name_ar for f in res["missing_price"]))
     return rtl(out)
 
@@ -524,6 +524,8 @@ async def _send_file(chat_message, update, context: ContextTypes.DEFAULT_TYPE):
                    f"⚖️ الوزن الكلي: {fmt(res['total_weight'])} كجم")
         if res["cost_per_ton"] is not None:
             caption += f"\n💵 تكلفة طن الخلطة: {fmt(res['cost_per_ton'])} جنيه"
+        elif res["missing_price"]:
+            caption += "\n⚠️ أكمل أسعار الخامات لحساب تكلفة الطن."
         if BOT_USERNAME and WATERMARK:
             caption += f"\n\n🤖 @{BOT_USERNAME}"
         caption = rtl(caption)

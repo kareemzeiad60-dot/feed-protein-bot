@@ -58,9 +58,9 @@
       const lines = feeds.filter((feed) => qty[String(feed.row)] > 0);
       const totalWeight = lines.reduce((sum, feed) => sum + qty[String(feed.row)], 0);
       const proteinKg = lines.reduce((sum, feed) => sum + qty[String(feed.row)] * feed.protein_pct / 100, 0);
-      const costLines = lines.filter((feed) => prices[String(feed.row)] > 0);
-      const costPerTon = costLines.length
-        ? costLines.reduce((sum, feed) => sum + prices[String(feed.row)] * qty[String(feed.row)] / totalWeight, 0)
+      const missingPrice = lines.filter((feed) => !prices[String(feed.row)]).map((feed) => feed.name);
+      const costPerTon = lines.length && missingPrice.length === 0
+        ? lines.reduce((sum, feed) => sum + prices[String(feed.row)] * qty[String(feed.row)] / totalWeight, 0)
         : null;
       let advice = "";
       if (target && totalWeight > 0) {
@@ -91,7 +91,7 @@
           protein_kg: proteinKg,
           cp_pct: totalWeight > 0 ? proteinKg / totalWeight * 100 : 0,
           cost_per_ton: costPerTon,
-          missing_price: lines.filter((feed) => !prices[String(feed.row)]).map((feed) => feed.name),
+          missing_price: missingPrice,
           lines: lines.map((feed) => ({
             row: feed.row,
             name: feed.name,
@@ -225,7 +225,9 @@
     const result = state.result;
     $("protein").textContent = `${fmt(result.cp_pct)}٪`;
     $("weight").textContent = `${fmt(result.total_weight)} كجم`;
-    $("cost").textContent = result.cost_per_ton == null ? "—" : `${fmt(result.cost_per_ton)} ج`;
+    $("cost").textContent = result.cost_per_ton == null
+      ? (result.missing_price.length ? "أكمل الأسعار" : "—")
+      : `${fmt(result.cost_per_ton)} ج`;
     $("advice").textContent = result.advice || "";
     $("advice").hidden = !result.advice;
     const missing = result.missing_price;

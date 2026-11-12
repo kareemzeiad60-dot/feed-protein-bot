@@ -19,8 +19,18 @@ prices = {by_en["Yellow Corn"].row: 12000, by_en["Soybean Meal (44%)"].row: 2200
 res = compute(qty, feeds, prices)
 assert abs(sum(sh for *_, sh in res["lines"]) - 1) < 1e-12                           # مجموع النسب = 100%
 exp_cost = 12000 * 500 / res["total_weight"] + 22000 * 250 / res["total_weight"]
-assert abs(res["cost_per_ton"] - exp_cost) < 1e-9 and len(res["missing_price"]) > 0
-print("mix: total=%.2f protein=%.4f cp=%.4f%% cost/ton=%.2f" % (res["total_weight"], res["protein_kg"], res["cp_pct"], res["cost_per_ton"]))
+assert res["cost_per_ton"] is None and len(res["missing_price"]) > 0
+complete_prices = {f.row: 10000.0 for f, *_ in res["lines"]}
+complete_prices.update(prices)
+complete_res = compute(qty, feeds, complete_prices)
+assert abs(complete_res["cost_per_ton"] - exp_cost - sum(
+    10000 * q / res["total_weight"] for f, q, *_ in res["lines"]
+    if f.row not in prices
+)) < 1e-9
+print("mix: total=%.2f protein=%.4f cp=%.4f%% cost/ton=%s" % (
+    res["total_weight"], res["protein_kg"], res["cp_pct"],
+    "incomplete" if res["cost_per_ton"] is None else f"{res['cost_per_ton']:.2f}",
+))
 
 # ---- النصيحة: لو طبّقنا الكمية المقترحة لازم نوصل للهدف بالظبط
 for target in (30.0, 12.0):
@@ -56,6 +66,8 @@ def check_excel(qty, prices, label):
     assert abs(dm.cell(tot, 9).value - 1) < 1e-9 and abs(dm["M6"].value - res["protein_kg"]) < 1e-9
     if res["cost_per_ton"] is not None:
         assert abs(ws.cell(tot, 12).value - res["cost_per_ton"]) < 1e-6 and abs(ws["O11"].value - res["cost_per_ton"]) < 1e-6
+    else:
+        assert ws.cell(tot, 12).value.startswith("=IF(COUNT(K5:K")
     for sh, cols in ((ws, 12), (dm, 10)):
         assert not [c.coordinate for row in sh.iter_rows(min_row=tot + 1, max_row=30, max_col=cols) for c in row if c.value is not None]
         assert not [c.coordinate for row in sh.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("#")]

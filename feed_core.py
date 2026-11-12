@@ -195,7 +195,7 @@ def parse_message(text: str, feeds):
 def compute(quantities: dict, feeds, prices: dict = None) -> dict:
     """
     E = الكمية × (DM% × CP_dm%)  ،  CP% = إجمالي البروتين ÷ إجمالي الوزن
-    نسبة المكون = كميته ÷ إجمالي الخلطة.  التكلفة (جنيه/طن خلطة) = مجموع (سعر طن المكون × نسبته).
+    نسبة المكون = كميته ÷ إجمالي الخلطة. لا تُحسب تكلفة الطن إلا بعد تسعير كل الخامات المستخدمة.
     """
     prices = prices or {}
     total_w = sum(quantities.get(f.row, 0.0) for f in feeds)
@@ -218,7 +218,7 @@ def compute(quantities: dict, feeds, prices: dict = None) -> dict:
         "total_weight": total_w,
         "protein_kg": total_p,
         "cp_pct": (total_p / total_w * 100) if total_w > 0 else 0.0,
-        "cost_per_ton": cost if any(prices.get(f.row, 0) > 0 for f, *_ in lines) else None,
+        "cost_per_ton": cost if lines and not missing else None,
         "missing_price": missing,
     }
 
@@ -335,6 +335,17 @@ def build_workbook(template_path: str, quantities: dict, out_path: str, recalc: 
         price = (prices or {}).get(old, 0)
         if price and price > 0:
             ws1.cell(new, PRICE_COL).value = price
+    total_row = FIRST_ROW + len(selected)
+    last_row = total_row - 1
+    ws1.cell(total_row, 12).value = (
+        f'=IF(COUNT(K{FIRST_ROW}:K{last_row})=ROWS(K{FIRST_ROW}:K{last_row}),'
+        f'SUM(L{FIRST_ROW}:L{last_row}),"")'
+    )
+    ws1.cell(11, 15).value = (
+        f'=IF(COUNT(K{FIRST_ROW}:K{last_row})=ROWS(K{FIRST_ROW}:K{last_row}),'
+        f'L{total_row},"أدخل أسعار الخامات")'
+    )
+    ws1.cell(12, 15).value = '=IF(ISNUMBER(O11),O11/1000,"")'
     if footer:                                                      # (نص, لينك) تحت الجدول — الملف بيتشاير في الجروبات
         from openpyxl.styles import Font
         cell = ws1.cell(FIRST_ROW + len(selected) + 2, 1)

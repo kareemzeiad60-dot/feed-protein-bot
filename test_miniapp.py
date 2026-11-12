@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import unittest
+import openpyxl
 from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import urlencode
@@ -85,6 +86,39 @@ class MiniAppApiTests(AioHTTPTestCase):
             }), self.feeds)
         with self.assertRaisesRegex(ValueError, "أطول"):
             parse_webapp_calculation(" " * 4097, self.feeds)
+
+    async def test_cost_requires_prices_for_all_used_feeds(self):
+        quantities = {feed.row: 0 for feed in self.feeds}
+        used = self.feeds[:2]
+        quantities[used[0].row] = 300
+        quantities[used[1].row] = 700
+
+        partial = fc.compute(quantities, self.feeds, {used[0].row: 12000})
+        self.assertIsNone(partial["cost_per_ton"])
+        self.assertEqual(partial["missing_price"], [used[1]])
+
+        complete = fc.compute(quantities, self.feeds, {
+            used[0].row: 12000,
+            used[1].row: 20000,
+        })
+        self.assertAlmostEqual(complete["cost_per_ton"], 17600)
+        self.assertEqual(complete["missing_price"], [])
+
+    async def test_excel_cost_summary_requests_missing_prices(self):
+        quantities = {feed.row: 0 for feed in self.feeds}
+        used = self.feeds[:2]
+        quantities[used[0].row] = 300
+        quantities[used[1].row] = 700
+        output = Path(self.tmp.name) / "incomplete-prices.xlsx"
+        fc.build_workbook(
+            "Feed_Calculator_Bilingual.xlsx",
+            quantities,
+            str(output),
+            prices={used[0].row: 12000},
+        )
+        sheet = openpyxl.load_workbook(output, data_only=False).worksheets[0]
+        self.assertIn("أدخل أسعار الخامات", sheet["O11"].value)
+        self.assertEqual(sheet["O12"].value, '=IF(ISNUMBER(O11),O11/1000,"")')
 
     async def test_state_recipes_and_excel_export(self):
         response = await self.client.get("/")
